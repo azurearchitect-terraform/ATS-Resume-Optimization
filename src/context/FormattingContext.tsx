@@ -32,7 +32,7 @@ type FormattingAction =
   | { type: 'REDO' }
   | { type: 'RESET'; sectionId: string };
 
-const DEFAULT_STYLE: SectionStyle = {
+export const DEFAULT_STYLE: SectionStyle = {
   fontFamily: 'Inter',
   fontSize: 11,
   fontWeight: 'normal',
@@ -116,6 +116,7 @@ export const FormattingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       experience: DEFAULT_STYLE,
       skills: DEFAULT_STYLE,
       education: DEFAULT_STYLE,
+      certifications: DEFAULT_STYLE,
     },
     history: { past: [], future: [] },
   });

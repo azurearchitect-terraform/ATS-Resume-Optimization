@@ -93,7 +93,7 @@ ${targetRole}
 7. Calculate approximate match score (0–100).
 `;
 
-  const maxRetries = 3;
+  const maxRetries = 5;
   let retryCount = 0;
 
   while (retryCount <= maxRetries) {
@@ -102,6 +102,7 @@ ${targetRole}
         model: "gemini-3.1-pro-preview",
         contents: prompt,
         config: {
+          maxOutputTokens: 16384,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -167,12 +168,15 @@ ${targetRole}
 
       return JSON.parse(response.text);
     } catch (error: any) {
-      const isRateLimit = error?.message?.includes("429") || error?.message?.includes("RESOURCE_EXHAUSTED");
+      const errorString = error?.message || String(error);
+      const isRateLimit = errorString.includes("429") || 
+                         errorString.includes("RESOURCE_EXHAUSTED") ||
+                         errorString.includes("quota");
       
       if (isRateLimit && retryCount < maxRetries) {
         retryCount++;
-        const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
-        console.warn(`Rate limit hit. Retrying in ${delay}ms... (Attempt ${retryCount}/${maxRetries})`);
+        const delay = Math.pow(2, retryCount) * 1000 + Math.random() * 1000; // Exponential backoff with jitter
+        console.warn(`Rate limit hit. Retrying in ${Math.round(delay)}ms... (Attempt ${retryCount}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -181,5 +185,5 @@ ${targetRole}
     }
   }
 
-  throw new Error("Maximum retries exceeded");
+  throw new Error("Maximum retries exceeded for optimization. Please try again in a few minutes.");
 }

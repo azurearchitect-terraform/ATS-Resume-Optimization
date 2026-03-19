@@ -5,7 +5,7 @@ import {
   Type, Palette, RotateCcw, Undo2, Redo2,
   ChevronDown, Search, CaseUpper, CaseLower, CaseSensitive
 } from 'lucide-react';
-import { useFormatting, SectionStyle, TextAlign, TextTransform } from '../context/FormattingContext';
+import { useFormatting, SectionStyle, TextAlign, TextTransform, DEFAULT_STYLE } from '../context/FormattingContext';
 
 const FONT_FAMILIES = [
   'Arial', 'Calibri', 'Times New Roman', 'Roboto', 'Inter', 'Georgia', 
@@ -17,7 +17,7 @@ const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 export const Toolbar: React.FC = () => {
   const { state, dispatch } = useFormatting();
   const { activeSection, styles } = state;
-  const currentStyle = activeSection ? styles[activeSection] : null;
+  const currentStyle = activeSection ? (styles[activeSection] || DEFAULT_STYLE) : null;
 
   const [fontSearch, setFontSearch] = useState('');
   const [showFonts, setShowFonts] = useState(false);

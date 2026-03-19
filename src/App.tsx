@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toolbar } from './components/Toolbar';
-import { useFormatting } from './context/FormattingContext';
+import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
 import { optimizeResume, OptimizationResult } from './services/geminiService';
 import masterResume from './services/masterResume.json';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -73,6 +73,8 @@ export default function App() {
   
   const { state: formattingState, dispatch: formattingDispatch } = useFormatting();
   const { activeSection, styles: sectionStyles } = formattingState;
+
+  const getSectionStyle = (sectionId: string) => sectionStyles[sectionId] || DEFAULT_STYLE;
 
   const [configWidth, setConfigWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
@@ -343,11 +345,11 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
       </header>
 
       <main className="max-w-[1600px] mx-auto px-4 py-8">
-        <div className="flex gap-8 relative h-[calc(100vh-200px)]">
+        <div className="flex gap-8 relative">
           {/* Configuration Pane */}
           <div 
             style={{ width: `${configWidth}px` }}
-            className={`flex-shrink-0 overflow-y-auto pr-4 custom-scrollbar h-full`}
+            className={`flex-shrink-0 pr-4`}
           >
             <div className="space-y-6">
             <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
@@ -703,14 +705,33 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
           />
 
           {/* Result Section */}
-          <div className="flex-1 overflow-y-auto h-full custom-scrollbar">
+          <div className="flex-1">
             <AnimatePresence mode="wait">
-              {Object.keys(results).length === 0 && !isOptimizing ? (
+              {isOptimizing && Object.keys(results).length === 0 ? (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className={`h-full min-h-[600px] flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
+                    isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/10'
+                  }`}
+                >
+                  <div className="relative w-20 h-20 mb-6">
+                    <div className="absolute inset-0 border-4 border-emerald-500/20 rounded-full" />
+                    <div className="absolute inset-0 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                    <Cpu className="absolute inset-0 m-auto w-8 h-8 text-emerald-500 animate-pulse" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">Optimizing Your Resume</h3>
+                  <p className="opacity-50 max-w-sm text-sm">
+                    Our AI is analyzing the job description and tailoring your experience for your target audiences...
+                  </p>
+                </motion.div>
+              ) : Object.keys(results).length === 0 ? (
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
-                  className={`h-full flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
+                  className={`h-full min-h-[600px] flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
                     isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/10'
                   }`}
                 >
@@ -765,7 +786,7 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       <Toolbar />
                     </div>
                     
-                    <div className="max-h-[800px] overflow-y-auto p-8 bg-gray-200/50 custom-scrollbar">
+                    <div className="p-8 bg-gray-200/50 custom-scrollbar">
                       <div 
                         className={`w-full mx-auto bg-white text-black p-[20mm] shadow-2xl min-h-[297mm] transition-all duration-300 ${activeSection ? 'ring-2 ring-emerald-500/20' : ''}`}
                       >
@@ -774,19 +795,19 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'header' })}
                           className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
-                            fontFamily: sectionStyles.header.fontFamily, 
-                            fontSize: `${sectionStyles.header.fontSize}pt`,
-                            textAlign: sectionStyles.header.textAlign,
-                            lineHeight: sectionStyles.header.lineHeight,
-                            color: sectionStyles.header.color,
-                            letterSpacing: `${sectionStyles.header.letterSpacing}px`,
-                            textTransform: sectionStyles.header.textTransform,
-                            fontWeight: sectionStyles.header.fontWeight,
-                            fontStyle: sectionStyles.header.fontStyle,
-                            textDecoration: sectionStyles.header.textDecoration
+                            fontFamily: getSectionStyle('header').fontFamily, 
+                            fontSize: `${getSectionStyle('header').fontSize}pt`,
+                            textAlign: getSectionStyle('header').textAlign,
+                            lineHeight: getSectionStyle('header').lineHeight,
+                            color: getSectionStyle('header').color,
+                            letterSpacing: `${getSectionStyle('header').letterSpacing}px`,
+                            textTransform: getSectionStyle('header').textTransform,
+                            fontWeight: getSectionStyle('header').fontWeight,
+                            fontStyle: getSectionStyle('header').fontStyle,
+                            textDecoration: getSectionStyle('header').textDecoration
                           }}
                         >
-                          <h1 className="text-4xl font-bold uppercase tracking-[0.1em] mb-1 leading-none" style={{ fontFamily: sectionStyles.header.fontFamily }}>
+                          <h1 className="text-4xl font-bold uppercase tracking-[0.1em] mb-1 leading-none" style={{ fontFamily: getSectionStyle('header').fontFamily }}>
                             {masterResume.personal_info.name}
                           </h1>
                           <div className="text-[10px] font-bold uppercase tracking-widest opacity-80 border-t border-b border-black py-1 mt-2">
@@ -799,23 +820,23 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'summary' })}
                           className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 mt-4 ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
-                            fontFamily: sectionStyles.summary.fontFamily, 
-                            fontSize: `${sectionStyles.summary.fontSize}pt`,
-                            textAlign: sectionStyles.summary.textAlign,
-                            lineHeight: sectionStyles.summary.lineHeight,
-                            color: sectionStyles.summary.color,
-                            letterSpacing: `${sectionStyles.summary.letterSpacing}px`,
-                            textTransform: sectionStyles.summary.textTransform,
-                            fontWeight: sectionStyles.summary.fontWeight,
-                            fontStyle: sectionStyles.summary.fontStyle,
-                            textDecoration: sectionStyles.summary.textDecoration
+                            fontFamily: getSectionStyle('summary').fontFamily, 
+                            fontSize: `${getSectionStyle('summary').fontSize}pt`,
+                            textAlign: getSectionStyle('summary').textAlign,
+                            lineHeight: getSectionStyle('summary').lineHeight,
+                            color: getSectionStyle('summary').color,
+                            letterSpacing: `${getSectionStyle('summary').letterSpacing}px`,
+                            textTransform: getSectionStyle('summary').textTransform,
+                            fontWeight: getSectionStyle('summary').fontWeight,
+                            fontStyle: getSectionStyle('summary').fontStyle,
+                            textDecoration: getSectionStyle('summary').textDecoration
                           }}
                         >
                           <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
                             <span className="bg-white pr-2">Professional Summary</span>
                             <div className="flex-1 h-[1px] bg-black/20"></div>
                           </h2>
-                          <p>{results[activeAudience].summary}</p>
+                          <p>{results[activeAudience]?.summary}</p>
                         </div>
 
                         {/* Skills - Centered Header, Bulleted List */}
@@ -823,16 +844,16 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'skills' })}
                           className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
-                            fontFamily: sectionStyles.skills.fontFamily, 
-                            fontSize: `${sectionStyles.skills.fontSize}pt`,
-                            textAlign: sectionStyles.skills.textAlign,
-                            lineHeight: sectionStyles.skills.lineHeight,
-                            color: sectionStyles.skills.color,
-                            letterSpacing: `${sectionStyles.skills.letterSpacing}px`,
-                            textTransform: sectionStyles.skills.textTransform,
-                            fontWeight: sectionStyles.skills.fontWeight,
-                            fontStyle: sectionStyles.skills.fontStyle,
-                            textDecoration: sectionStyles.skills.textDecoration
+                            fontFamily: getSectionStyle('skills').fontFamily, 
+                            fontSize: `${getSectionStyle('skills').fontSize}pt`,
+                            textAlign: getSectionStyle('skills').textAlign,
+                            lineHeight: getSectionStyle('skills').lineHeight,
+                            color: getSectionStyle('skills').color,
+                            letterSpacing: `${getSectionStyle('skills').letterSpacing}px`,
+                            textTransform: getSectionStyle('skills').textTransform,
+                            fontWeight: getSectionStyle('skills').fontWeight,
+                            fontStyle: getSectionStyle('skills').fontStyle,
+                            textDecoration: getSectionStyle('skills').textDecoration
                           }}
                         >
                           <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest text-center flex items-center">
@@ -841,7 +862,7 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                             <div className="flex-1 h-[1px] bg-black/20"></div>
                           </h2>
                           <div className="grid grid-cols-1 gap-y-1">
-                            {results[activeAudience].skills.map((s, i) => (
+                            {(results[activeAudience]?.skills || []).map((s, i) => (
                               <div key={i} className="flex items-start gap-2">
                                 <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
                                 <span>{s}</span>
@@ -855,23 +876,23 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'experience' })}
                           className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
-                            fontFamily: sectionStyles.experience.fontFamily, 
-                            fontSize: `${sectionStyles.experience.fontSize}pt`,
-                            textAlign: sectionStyles.experience.textAlign,
-                            lineHeight: sectionStyles.experience.lineHeight,
-                            color: sectionStyles.experience.color,
-                            letterSpacing: `${sectionStyles.experience.letterSpacing}px`,
-                            textTransform: sectionStyles.experience.textTransform,
-                            fontWeight: sectionStyles.experience.fontWeight,
-                            fontStyle: sectionStyles.experience.fontStyle,
-                            textDecoration: sectionStyles.experience.textDecoration
+                            fontFamily: getSectionStyle('experience').fontFamily, 
+                            fontSize: `${getSectionStyle('experience').fontSize}pt`,
+                            textAlign: getSectionStyle('experience').textAlign,
+                            lineHeight: getSectionStyle('experience').lineHeight,
+                            color: getSectionStyle('experience').color,
+                            letterSpacing: `${getSectionStyle('experience').letterSpacing}px`,
+                            textTransform: getSectionStyle('experience').textTransform,
+                            fontWeight: getSectionStyle('experience').fontWeight,
+                            fontStyle: getSectionStyle('experience').fontStyle,
+                            textDecoration: getSectionStyle('experience').textDecoration
                           }}
                         >
                           <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest flex items-center">
                             <span className="bg-white pr-2">Professional Experience</span>
                             <div className="flex-1 h-[1px] bg-black/20"></div>
                           </h2>
-                          {results[activeAudience].experience.map((exp, i) => (
+                          {(results[activeAudience]?.experience || []).map((exp, i) => (
                             <div key={i} className="mb-4">
                               <div className="flex justify-between font-bold items-baseline">
                                 <span className="text-[1.1em]">{exp.role.toUpperCase()}</span>
@@ -895,16 +916,16 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
                           className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
-                            fontFamily: sectionStyles.certifications.fontFamily, 
-                            fontSize: `${sectionStyles.certifications.fontSize}pt`,
-                            textAlign: sectionStyles.certifications.textAlign,
-                            lineHeight: sectionStyles.certifications.lineHeight,
-                            color: sectionStyles.certifications.color,
-                            letterSpacing: `${sectionStyles.certifications.letterSpacing}px`,
-                            textTransform: sectionStyles.certifications.textTransform,
-                            fontWeight: sectionStyles.certifications.fontWeight,
-                            fontStyle: sectionStyles.certifications.fontStyle,
-                            textDecoration: sectionStyles.certifications.textDecoration
+                            fontFamily: getSectionStyle('certifications').fontFamily, 
+                            fontSize: `${getSectionStyle('certifications').fontSize}pt`,
+                            textAlign: getSectionStyle('certifications').textAlign,
+                            lineHeight: getSectionStyle('certifications').lineHeight,
+                            color: getSectionStyle('certifications').color,
+                            letterSpacing: `${getSectionStyle('certifications').letterSpacing}px`,
+                            textTransform: getSectionStyle('certifications').textTransform,
+                            fontWeight: getSectionStyle('certifications').fontWeight,
+                            fontStyle: getSectionStyle('certifications').fontStyle,
+                            textDecoration: getSectionStyle('certifications').textDecoration
                           }}
                         >
                           <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
@@ -926,16 +947,16 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'education' })}
                           className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
-                            fontFamily: sectionStyles.education.fontFamily, 
-                            fontSize: `${sectionStyles.education.fontSize}pt`,
-                            textAlign: sectionStyles.education.textAlign,
-                            lineHeight: sectionStyles.education.lineHeight,
-                            color: sectionStyles.education.color,
-                            letterSpacing: `${sectionStyles.education.letterSpacing}px`,
-                            textTransform: sectionStyles.education.textTransform,
-                            fontWeight: sectionStyles.education.fontWeight,
-                            fontStyle: sectionStyles.education.fontStyle,
-                            textDecoration: sectionStyles.education.textDecoration
+                            fontFamily: getSectionStyle('education').fontFamily, 
+                            fontSize: `${getSectionStyle('education').fontSize}pt`,
+                            textAlign: getSectionStyle('education').textAlign,
+                            lineHeight: getSectionStyle('education').lineHeight,
+                            color: getSectionStyle('education').color,
+                            letterSpacing: `${getSectionStyle('education').letterSpacing}px`,
+                            textTransform: getSectionStyle('education').textTransform,
+                            fontWeight: getSectionStyle('education').fontWeight,
+                            fontStyle: getSectionStyle('education').fontStyle,
+                            textDecoration: getSectionStyle('education').textDecoration
                           }}
                         >
                           <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
@@ -970,18 +991,18 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       className={`w-[210mm] min-h-[297mm] p-[20mm] bg-white text-black legacy-colors`}
                     >
                       <div className="text-center mb-6" style={{ 
-                        fontFamily: sectionStyles.header.fontFamily, 
-                        fontSize: `${sectionStyles.header.fontSize}pt`,
-                        textAlign: sectionStyles.header.textAlign,
-                        lineHeight: sectionStyles.header.lineHeight,
-                        color: sectionStyles.header.color,
-                        letterSpacing: `${sectionStyles.header.letterSpacing}px`,
-                        textTransform: sectionStyles.header.textTransform,
-                        fontWeight: sectionStyles.header.fontWeight,
-                        fontStyle: sectionStyles.header.fontStyle,
-                        textDecoration: sectionStyles.header.textDecoration
+                        fontFamily: getSectionStyle('header').fontFamily, 
+                        fontSize: `${getSectionStyle('header').fontSize}pt`,
+                        textAlign: getSectionStyle('header').textAlign,
+                        lineHeight: getSectionStyle('header').lineHeight,
+                        color: getSectionStyle('header').color,
+                        letterSpacing: `${getSectionStyle('header').letterSpacing}px`,
+                        textTransform: getSectionStyle('header').textTransform,
+                        fontWeight: getSectionStyle('header').fontWeight,
+                        fontStyle: getSectionStyle('header').fontStyle,
+                        textDecoration: getSectionStyle('header').textDecoration
                       }}>
-                        <h1 className="text-4xl font-bold uppercase tracking-[0.1em] mb-1 leading-none" style={{ fontFamily: sectionStyles.header.fontFamily }}>
+                        <h1 className="text-4xl font-bold uppercase tracking-[0.1em] mb-1 leading-none" style={{ fontFamily: getSectionStyle('header').fontFamily }}>
                           {masterResume.personal_info.name}
                         </h1>
                         <div className="text-[10px] font-bold uppercase tracking-widest opacity-80 border-t border-b border-black py-1 mt-2">
@@ -990,35 +1011,35 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       </div>
                       
                       <div className="mb-6" style={{ 
-                        fontFamily: sectionStyles.summary.fontFamily, 
-                        fontSize: `${sectionStyles.summary.fontSize}pt`,
-                        textAlign: sectionStyles.summary.textAlign,
-                        lineHeight: sectionStyles.summary.lineHeight,
-                        color: sectionStyles.summary.color,
-                        letterSpacing: `${sectionStyles.summary.letterSpacing}px`,
-                        textTransform: sectionStyles.summary.textTransform,
-                        fontWeight: sectionStyles.summary.fontWeight,
-                        fontStyle: sectionStyles.summary.fontStyle,
-                        textDecoration: sectionStyles.summary.textDecoration
+                        fontFamily: getSectionStyle('summary').fontFamily, 
+                        fontSize: `${getSectionStyle('summary').fontSize}pt`,
+                        textAlign: getSectionStyle('summary').textAlign,
+                        lineHeight: getSectionStyle('summary').lineHeight,
+                        color: getSectionStyle('summary').color,
+                        letterSpacing: `${getSectionStyle('summary').letterSpacing}px`,
+                        textTransform: getSectionStyle('summary').textTransform,
+                        fontWeight: getSectionStyle('summary').fontWeight,
+                        fontStyle: getSectionStyle('summary').fontStyle,
+                        textDecoration: getSectionStyle('summary').textDecoration
                       }}>
                         <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
                           <span className="bg-white pr-2">Professional Summary</span>
                           <div className="flex-1 h-[1px] bg-gray-200"></div>
                         </h2>
-                        <p>{results[activeAudience].summary}</p>
+                        <p>{results[activeAudience]?.summary}</p>
                       </div>
 
                       <div className="mb-6" style={{ 
-                        fontFamily: sectionStyles.skills.fontFamily, 
-                        fontSize: `${sectionStyles.skills.fontSize}pt`,
-                        textAlign: sectionStyles.skills.textAlign,
-                        lineHeight: sectionStyles.skills.lineHeight,
-                        color: sectionStyles.skills.color,
-                        letterSpacing: `${sectionStyles.skills.letterSpacing}px`,
-                        textTransform: sectionStyles.skills.textTransform,
-                        fontWeight: sectionStyles.skills.fontWeight,
-                        fontStyle: sectionStyles.skills.fontStyle,
-                        textDecoration: sectionStyles.skills.textDecoration
+                        fontFamily: getSectionStyle('skills').fontFamily, 
+                        fontSize: `${getSectionStyle('skills').fontSize}pt`,
+                        textAlign: getSectionStyle('skills').textAlign,
+                        lineHeight: getSectionStyle('skills').lineHeight,
+                        color: getSectionStyle('skills').color,
+                        letterSpacing: `${getSectionStyle('skills').letterSpacing}px`,
+                        textTransform: getSectionStyle('skills').textTransform,
+                        fontWeight: getSectionStyle('skills').fontWeight,
+                        fontStyle: getSectionStyle('skills').fontStyle,
+                        textDecoration: getSectionStyle('skills').textDecoration
                       }}>
                         <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest text-center flex items-center">
                           <div className="flex-1 h-[1px] bg-gray-200"></div>
@@ -1026,7 +1047,7 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                           <div className="flex-1 h-[1px] bg-gray-200"></div>
                         </h2>
                         <div className="grid grid-cols-1 gap-y-1">
-                          {results[activeAudience].skills.map((s, i) => (
+                          {(results[activeAudience]?.skills || []).map((s, i) => (
                             <div key={i} className="flex items-start gap-2">
                               <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
                               <span>{s}</span>
@@ -1036,22 +1057,22 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       </div>
 
                       <div className="mb-6" style={{ 
-                        fontFamily: sectionStyles.experience.fontFamily, 
-                        fontSize: `${sectionStyles.experience.fontSize}pt`,
-                        textAlign: sectionStyles.experience.textAlign,
-                        lineHeight: sectionStyles.experience.lineHeight,
-                        color: sectionStyles.experience.color,
-                        letterSpacing: `${sectionStyles.experience.letterSpacing}px`,
-                        textTransform: sectionStyles.experience.textTransform,
-                        fontWeight: sectionStyles.experience.fontWeight,
-                        fontStyle: sectionStyles.experience.fontStyle,
-                        textDecoration: sectionStyles.experience.textDecoration
+                        fontFamily: getSectionStyle('experience').fontFamily, 
+                        fontSize: `${getSectionStyle('experience').fontSize}pt`,
+                        textAlign: getSectionStyle('experience').textAlign,
+                        lineHeight: getSectionStyle('experience').lineHeight,
+                        color: getSectionStyle('experience').color,
+                        letterSpacing: `${getSectionStyle('experience').letterSpacing}px`,
+                        textTransform: getSectionStyle('experience').textTransform,
+                        fontWeight: getSectionStyle('experience').fontWeight,
+                        fontStyle: getSectionStyle('experience').fontStyle,
+                        textDecoration: getSectionStyle('experience').textDecoration
                       }}>
                         <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest flex items-center">
                           <span className="bg-white pr-2">Professional Experience</span>
                           <div className="flex-1 h-[1px] bg-gray-200"></div>
                         </h2>
-                        {results[activeAudience].experience.map((exp, i) => (
+                        {(results[activeAudience]?.experience || []).map((exp, i) => (
                           <div key={i} className="mb-4">
                             <div className="flex justify-between font-bold items-baseline">
                               <span className="text-[1.1em]">{exp.role.toUpperCase()}</span>
@@ -1071,16 +1092,16 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       </div>
 
                       <div className="mb-6" style={{ 
-                        fontFamily: sectionStyles.certifications.fontFamily, 
-                        fontSize: `${sectionStyles.certifications.fontSize}pt`,
-                        textAlign: sectionStyles.certifications.textAlign,
-                        lineHeight: sectionStyles.certifications.lineHeight,
-                        color: sectionStyles.certifications.color,
-                        letterSpacing: `${sectionStyles.certifications.letterSpacing}px`,
-                        textTransform: sectionStyles.certifications.textTransform,
-                        fontWeight: sectionStyles.certifications.fontWeight,
-                        fontStyle: sectionStyles.certifications.fontStyle,
-                        textDecoration: sectionStyles.certifications.textDecoration
+                        fontFamily: getSectionStyle('certifications').fontFamily, 
+                        fontSize: `${getSectionStyle('certifications').fontSize}pt`,
+                        textAlign: getSectionStyle('certifications').textAlign,
+                        lineHeight: getSectionStyle('certifications').lineHeight,
+                        color: getSectionStyle('certifications').color,
+                        letterSpacing: `${getSectionStyle('certifications').letterSpacing}px`,
+                        textTransform: getSectionStyle('certifications').textTransform,
+                        fontWeight: getSectionStyle('certifications').fontWeight,
+                        fontStyle: getSectionStyle('certifications').fontStyle,
+                        textDecoration: getSectionStyle('certifications').textDecoration
                       }}>
                         <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
                           <span className="bg-white pr-2">Certifications</span>
@@ -1097,16 +1118,16 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       </div>
 
                       <div className="mb-6" style={{ 
-                        fontFamily: sectionStyles.education.fontFamily, 
-                        fontSize: `${sectionStyles.education.fontSize}pt`,
-                        textAlign: sectionStyles.education.textAlign,
-                        lineHeight: sectionStyles.education.lineHeight,
-                        color: sectionStyles.education.color,
-                        letterSpacing: `${sectionStyles.education.letterSpacing}px`,
-                        textTransform: sectionStyles.education.textTransform,
-                        fontWeight: sectionStyles.education.fontWeight,
-                        fontStyle: sectionStyles.education.fontStyle,
-                        textDecoration: sectionStyles.education.textDecoration
+                        fontFamily: getSectionStyle('education').fontFamily, 
+                        fontSize: `${getSectionStyle('education').fontSize}pt`,
+                        textAlign: getSectionStyle('education').textAlign,
+                        lineHeight: getSectionStyle('education').lineHeight,
+                        color: getSectionStyle('education').color,
+                        letterSpacing: `${getSectionStyle('education').letterSpacing}px`,
+                        textTransform: getSectionStyle('education').textTransform,
+                        fontWeight: getSectionStyle('education').fontWeight,
+                        fontStyle: getSectionStyle('education').fontStyle,
+                        textDecoration: getSectionStyle('education').textDecoration
                       }}>
                         <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
                           <span className="bg-white pr-2">Education</span>
