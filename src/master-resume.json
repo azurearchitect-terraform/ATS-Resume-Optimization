@@ -1,0 +1,66 @@
+{
+  "personal_info": {
+    "name": "Harnish Hacker",
+    "title": "Senior Full Stack Engineer & Cloud Architect",
+    "email": "hackerharnish@gmail.com",
+    "phone": "+91 98765 43210",
+    "location": "Mumbai, India",
+    "website": "harnish.dev",
+    "summary": "Innovative Full Stack Engineer with 16+ years of experience in architecting and implementing high-performance web applications. Expert in React, Node.js, and Cloud Infrastructure (AWS/Azure). Proven track record of leading cross-functional teams and delivering complex projects on time."
+  },
+  "experience": [
+    {
+      "role": "Lead Software Architect",
+      "company": "Tech Solutions Inc.",
+      "duration": "2018 - Present",
+      "bullets": [
+        "Architected and led the development of a microservices-based e-commerce platform handling 1M+ daily active users.",
+        "Implemented a real-time data processing pipeline using Kafka and Spark, reducing latency by 40%.",
+        "Mentored a team of 15+ engineers and established best practices for CI/CD and automated testing.",
+        "Optimized cloud infrastructure costs by 30% through strategic use of serverless and containerization."
+      ]
+    },
+    {
+      "role": "Senior Full Stack Developer",
+      "company": "Global Systems Ltd.",
+      "duration": "2012 - 2018",
+      "bullets": [
+        "Developed and maintained multiple enterprise-level web applications using React and Ruby on Rails.",
+        "Integrated third-party APIs for payment processing and CRM, improving business efficiency by 25%.",
+        "Led the migration of legacy monolithic applications to a modern React-based frontend.",
+        "Collaborated with UX designers to create intuitive and responsive user interfaces."
+      ]
+    },
+    {
+      "role": "Software Engineer",
+      "company": "StartUp Hub",
+      "duration": "2008 - 2012",
+      "bullets": [
+        "Built the core product from scratch using PHP and MySQL, scaling to 100k users in the first year.",
+        "Implemented automated deployment scripts using Bash and Jenkins.",
+        "Optimized database queries, resulting in a 50% improvement in page load times.",
+        "Contributed to open-source libraries used within the company."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "school": "Indian Institute of Technology (IIT)",
+      "degree": "Bachelor of Technology in Computer Science",
+      "period": "2004 - 2008"
+    }
+  ],
+  "skills": [
+    "React", "TypeScript", "Node.js", "Python", "AWS", "Azure", "Docker", "Kubernetes", "GraphQL", "PostgreSQL", "Redis", "Kafka"
+  ],
+  "projects": [
+    {
+      "title": "AI-Powered Resume Builder",
+      "description": "A sophisticated web application that uses Gemini AI to optimize resumes for ATS compatibility."
+    },
+    {
+      "title": "Cloud Monitoring Dashboard",
+      "description": "Real-time monitoring tool for multi-cloud environments with automated alerting."
+    }
+  ]
+}

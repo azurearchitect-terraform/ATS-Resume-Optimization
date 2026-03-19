@@ -56,7 +56,7 @@ function formattingReducer(state: FormattingState, action: FormattingAction): Fo
       return { ...state, activeSection: action.sectionId };
 
     case 'UPDATE_STYLE': {
-      const currentStyles = state.styles[action.sectionId] || DEFAULT_STYLE;
+      const currentStyles = state.styles[action.sectionId] || (action.sectionId.startsWith('exp-') ? state.styles['experience'] : DEFAULT_STYLE);
       const newStyles = { ...state.styles, [action.sectionId]: { ...currentStyles, ...action.updates } };
       return {
         ...state,
@@ -111,12 +111,13 @@ export const FormattingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [state, dispatch] = useReducer(formattingReducer, {
     activeSection: 'header',
     styles: {
-      header: { ...DEFAULT_STYLE, fontSize: 24, fontWeight: 'bold', textAlign: 'center' },
-      summary: DEFAULT_STYLE,
-      experience: DEFAULT_STYLE,
-      skills: DEFAULT_STYLE,
-      education: DEFAULT_STYLE,
-      certifications: DEFAULT_STYLE,
+      header: { ...DEFAULT_STYLE, fontSize: 24, fontWeight: 'bold', textAlign: 'center', letterSpacing: 1, textTransform: 'uppercase' },
+      summary: { ...DEFAULT_STYLE, fontSize: 10, textAlign: 'justify', lineHeight: 1.4 },
+      experience: { ...DEFAULT_STYLE, fontSize: 10, textAlign: 'justify', lineHeight: 1.4 },
+      skills: { ...DEFAULT_STYLE, fontSize: 9, lineHeight: 1.2 },
+      education: { ...DEFAULT_STYLE, fontSize: 9, lineHeight: 1.2 },
+      certifications: { ...DEFAULT_STYLE, fontSize: 9, lineHeight: 1.2 },
+      projects: { ...DEFAULT_STYLE, fontSize: 10, textAlign: 'justify', lineHeight: 1.4 },
     },
     history: { past: [], future: [] },
   });

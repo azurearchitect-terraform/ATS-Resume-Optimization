@@ -33,7 +33,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Toolbar } from './components/Toolbar';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, OptimizationResult } from './services/geminiService';
+import { optimizeResume, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
 import masterResume from './services/masterResume.json';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -71,10 +71,22 @@ export default function App() {
   const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({});
   const [showInsights, setShowInsights] = useState(false);
   
+  const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
+    gemini: { model: 'gemini-3.1-pro-preview', apiKey: '' },
+    openai: { model: 'gpt-4o', apiKey: '' },
+    anthropic: { model: 'claude-3-5-sonnet-20240620', apiKey: '' }
+  });
+  const [selectedEngine, setSelectedEngine] = useState<EngineType>('gemini');
+  const [showEngineSettings, setShowEngineSettings] = useState(false);
+  
   const { state: formattingState, dispatch: formattingDispatch } = useFormatting();
   const { activeSection, styles: sectionStyles } = formattingState;
 
-  const getSectionStyle = (sectionId: string) => sectionStyles[sectionId] || DEFAULT_STYLE;
+  const getSectionStyle = (sectionId: string) => {
+    if (sectionStyles[sectionId]) return sectionStyles[sectionId];
+    if (sectionId.startsWith('exp-')) return sectionStyles['experience'] || DEFAULT_STYLE;
+    return DEFAULT_STYLE;
+  };
 
   const [configWidth, setConfigWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
@@ -167,7 +179,12 @@ export default function App() {
         
         try {
           const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
-          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel);
+          const currentEngineConfig = {
+            engine: selectedEngine,
+            model: engineConfig[selectedEngine].model,
+            apiKey: engineConfig[selectedEngine].apiKey
+          };
+          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig);
           
           // Update results incrementally
           setResults(prev => ({ ...prev, [audienceId]: data }));
@@ -274,17 +291,24 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
     try {
       // Temporarily show the hidden preview for capturing
       const element = resumePreviewRef.current;
-      element.style.position = 'relative';
+      element.style.position = 'fixed';
       element.style.left = '0';
+      element.style.top = '0';
       element.style.visibility = 'visible';
       element.style.pointerEvents = 'auto';
+      element.style.zIndex = '9999';
+
+      // Small delay to ensure rendering
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const canvas = await html2canvas(element, {
         scale: 2, // Higher scale for better quality
         useCORS: true,
         backgroundColor: '#FFFFFF',
         logging: false,
-        allowTaint: true
+        allowTaint: true,
+        width: element.offsetWidth,
+        height: element.offsetHeight
       });
 
       // Restore hidden state
@@ -292,14 +316,20 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
       element.style.left = '-9999px';
       element.style.visibility = 'hidden';
       element.style.pointerEvents = 'none';
+      element.style.zIndex = '-1';
       
-      const imgData = canvas.toDataURL('image/jpeg', 0.9);
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF('p', 'mm', 'a4', true);
-      const imgProps = pdf.getImageProperties(imgData);
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      const pdfHeight = pdf.internal.pageSize.getHeight();
       
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+      // Calculate dimensions to fit A4
+      const imgProps = pdf.getImageProperties(imgData);
+      const ratio = Math.min(pdfWidth / imgProps.width, pdfHeight / imgProps.height);
+      const finalWidth = imgProps.width * ratio;
+      const finalHeight = imgProps.height * ratio;
+      
+      pdf.addImage(imgData, 'JPEG', 0, 0, finalWidth, finalHeight, undefined, 'FAST');
       const fileName = `Optimized_Resume_${(targetRole || "Professional").replace(/\s+/g, '_')}_${activeAudience}.pdf`;
       pdf.save(fileName);
     } catch (err) {
@@ -509,6 +539,101 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                   )}
                 </div>
 
+                {/* AI Engine Settings */}
+                <div className={`rounded-xl border p-4 transition-colors ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                  <button 
+                    onClick={() => setShowEngineSettings(!showEngineSettings)}
+                    className="w-full flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-emerald-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest">AI Engine Settings</span>
+                    </div>
+                    {showEngineSettings ? <ChevronDown className="w-4 h-4 opacity-50" /> : <ChevronRight className="w-4 h-4 opacity-50" />}
+                  </button>
+                  
+                  <AnimatePresence>
+                    {showEngineSettings && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-4 space-y-4 overflow-hidden"
+                      >
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">Select Engine</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(['gemini', 'openai', 'anthropic'] as const).map((eng) => (
+                              <button
+                                key={eng}
+                                onClick={() => setSelectedEngine(eng)}
+                                className={`py-1.5 text-[10px] font-bold rounded border transition-all capitalize ${
+                                  selectedEngine === eng 
+                                    ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
+                                    : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10' : 'bg-white text-black/60 border-black/5')
+                                }`}
+                              >
+                                {eng}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">Model</label>
+                          <select 
+                            className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                            }`}
+                            value={engineConfig[selectedEngine].model}
+                            onChange={(e) => setEngineConfig({
+                              ...engineConfig,
+                              [selectedEngine]: { ...engineConfig[selectedEngine], model: e.target.value }
+                            })}
+                          >
+                            {selectedEngine === 'gemini' && (
+                              <>
+                                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                                <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                              </>
+                            )}
+                            {selectedEngine === 'openai' && (
+                              <>
+                                <option value="gpt-4o">GPT-4o</option>
+                                <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                              </>
+                            )}
+                            {selectedEngine === 'anthropic' && (
+                              <>
+                                <option value="claude-3-5-sonnet-20240620">Claude 3.5 Sonnet</option>
+                                <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                              </>
+                            )}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">API Key (Optional if env set)</label>
+                          <input 
+                            type="password"
+                            placeholder={`Enter ${selectedEngine} API key`}
+                            className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                            }`}
+                            value={engineConfig[selectedEngine].apiKey}
+                            onChange={(e) => setEngineConfig({
+                              ...engineConfig,
+                              [selectedEngine]: { ...engineConfig[selectedEngine], apiKey: e.target.value }
+                            })}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
                 {/* Job Description */}
                 <div>
                   <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Job Description</label>
@@ -520,6 +645,21 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                     value={jobDescription}
                     onChange={(e) => setJobDescription(e.target.value)}
                   />
+                </div>
+
+                {/* Text Formatting Panel (Moved from Result Section) */}
+                <div className={`rounded-xl border p-4 transition-colors ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-emerald-50/30 border-emerald-500/10'}`}>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Type className="w-4 h-4 text-emerald-500" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Text Formatting Control</span>
+                  </div>
+                  {activeSection ? (
+                    <Toolbar isDarkMode={isDarkMode} />
+                  ) : (
+                    <div className="py-8 text-center border border-dashed border-emerald-500/20 rounded-lg">
+                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-40">Select a section in the preview<br/>to start formatting</p>
+                    </div>
+                  )}
                 </div>
 
                 {error && (
@@ -558,7 +698,8 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                               <tr className="opacity-40 uppercase font-bold text-[10px] tracking-widest border-b border-white/10">
                                 <th className="pb-2 px-2">Select</th>
                                 <th className="pb-2">Target Audience</th>
-                                <th className="pb-2">ATS Score</th>
+                                <th className="pb-2">Baseline</th>
+                                <th className="pb-2">Optimized</th>
                                 <th className="pb-2">Keywords</th>
                                 <th className="pb-2">Report</th>
                               </tr>
@@ -586,6 +727,13 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                                           <span>{aud?.icon}</span>
                                           <span>{aud?.label}</span>
                                         </div>
+                                      </td>
+                                      <td className="py-3">
+                                        {res ? (
+                                          <span className="opacity-50 font-bold">{res.baseline_score}%</span>
+                                        ) : (
+                                          <span className="opacity-30">--</span>
+                                        )}
                                       </td>
                                       <td className="py-3">
                                         {res ? (
@@ -782,18 +930,15 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       </div>
                     </div>
                     
-                    <div className="p-4 border-b border-white/10">
-                      <Toolbar />
-                    </div>
-                    
-                    <div className="p-8 bg-gray-200/50 custom-scrollbar">
+                    <div className="p-8 bg-gray-200/50 custom-scrollbar flex justify-center">
                       <div 
-                        className={`w-full mx-auto bg-white text-black p-[20mm] shadow-2xl min-h-[297mm] transition-all duration-300 ${activeSection ? 'ring-2 ring-emerald-500/20' : ''}`}
+                        id="resume-preview"
+                        className={`w-full max-w-[210mm] bg-white text-black p-[15mm] shadow-2xl min-h-[297mm] transition-all duration-300 ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} legacy-colors`}
                       >
-                        {/* Header - Centered as per screenshot */}
+                        {/* Header - Professional & Clean */}
                         <div 
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'header' })}
-                          className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                          className={`cursor-pointer transition-all rounded p-2 -m-2 text-center border-b-2 border-black pb-4 mb-6 ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
                             fontFamily: getSectionStyle('header').fontFamily, 
                             fontSize: `${getSectionStyle('header').fontSize}pt`,
@@ -807,18 +952,25 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                             textDecoration: getSectionStyle('header').textDecoration
                           }}
                         >
-                          <h1 className="text-4xl font-bold uppercase tracking-[0.1em] mb-1 leading-none" style={{ fontFamily: getSectionStyle('header').fontFamily }}>
+                          <h1 className="text-4xl font-black uppercase tracking-tighter mb-2" style={{ fontFamily: getSectionStyle('header').fontFamily }}>
                             {masterResume.personal_info.name}
                           </h1>
-                          <div className="text-[10px] font-bold uppercase tracking-widest opacity-80 border-t border-b border-black py-1 mt-2">
-                            {masterResume.personal_info.location.toUpperCase()} | {masterResume.personal_info.email.toUpperCase()} | {masterResume.personal_info.phone}
+                          <div className="flex items-center justify-center gap-3 text-[9pt] font-medium opacity-80">
+                            <span>{masterResume.personal_info.location}</span>
+                            <span className="w-1 h-1 rounded-full bg-black/30"></span>
+                            <span>{masterResume.personal_info.email}</span>
+                            <span className="w-1 h-1 rounded-full bg-black/30"></span>
+                            <span>{masterResume.personal_info.phone}</span>
+                          </div>
+                          <div className="mt-1 text-[9pt] font-bold text-emerald-700">
+                            {masterResume.personal_info.linkedin}
                           </div>
                         </div>
                         
                         {/* Professional Summary */}
                         <div 
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'summary' })}
-                          className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 mt-4 ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                          className={`mb-8 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
                           style={{ 
                             fontFamily: getSectionStyle('summary').fontFamily, 
                             fontSize: `${getSectionStyle('summary').fontSize}pt`,
@@ -832,142 +984,175 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                             textDecoration: getSectionStyle('summary').textDecoration
                           }}
                         >
-                          <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
-                            <span className="bg-white pr-2">Professional Summary</span>
-                            <div className="flex-1 h-[1px] bg-black/20"></div>
+                          <h2 className="text-[11pt] font-bold border-b border-black/20 mb-3 uppercase tracking-widest text-emerald-800">
+                            Professional Summary
                           </h2>
-                          <p>{results[activeAudience]?.summary}</p>
+                          <p className="text-justify leading-relaxed">{results[activeAudience]?.summary || masterResume.professional_summary_base}</p>
                         </div>
 
-                        {/* Skills - Centered Header, Bulleted List */}
-                        <div 
-                          onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'skills' })}
-                          className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
-                          style={{ 
-                            fontFamily: getSectionStyle('skills').fontFamily, 
-                            fontSize: `${getSectionStyle('skills').fontSize}pt`,
-                            textAlign: getSectionStyle('skills').textAlign,
-                            lineHeight: getSectionStyle('skills').lineHeight,
-                            color: getSectionStyle('skills').color,
-                            letterSpacing: `${getSectionStyle('skills').letterSpacing}px`,
-                            textTransform: getSectionStyle('skills').textTransform,
-                            fontWeight: getSectionStyle('skills').fontWeight,
-                            fontStyle: getSectionStyle('skills').fontStyle,
-                            textDecoration: getSectionStyle('skills').textDecoration
-                          }}
-                        >
-                          <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest text-center flex items-center">
-                            <div className="flex-1 h-[1px] bg-black/20"></div>
-                            <span className="px-4">SKILLS</span>
-                            <div className="flex-1 h-[1px] bg-black/20"></div>
+                        {/* Experience Section */}
+                        <div className="mb-8">
+                          <h2 className="text-[11pt] font-bold border-b border-black/20 mb-4 uppercase tracking-widest text-emerald-800">
+                            Professional Experience
                           </h2>
-                          <div className="grid grid-cols-1 gap-y-1">
-                            {(results[activeAudience]?.skills || []).map((s, i) => (
-                              <div key={i} className="flex items-start gap-2">
-                                <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
-                                <span>{s}</span>
+                          <div className="space-y-6">
+                            {(results[activeAudience]?.experience || masterResume.experience).map((exp, idx) => (
+                              <div 
+                                key={idx}
+                                onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: `exp-${idx}` })}
+                                className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === `exp-${idx}` ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                                style={{ 
+                                  fontFamily: getSectionStyle(`exp-${idx}`).fontFamily, 
+                                  fontSize: `${getSectionStyle(`exp-${idx}`).fontSize}pt`,
+                                  textAlign: getSectionStyle(`exp-${idx}`).textAlign,
+                                  lineHeight: getSectionStyle(`exp-${idx}`).lineHeight,
+                                  color: getSectionStyle(`exp-${idx}`).color,
+                                  letterSpacing: `${getSectionStyle(`exp-${idx}`).letterSpacing}px`,
+                                  textTransform: getSectionStyle(`exp-${idx}`).textTransform,
+                                  fontWeight: getSectionStyle(`exp-${idx}`).fontWeight,
+                                  fontStyle: getSectionStyle(`exp-${idx}`).fontStyle,
+                                  textDecoration: getSectionStyle(`exp-${idx}`).textDecoration
+                                }}
+                              >
+                                <div className="flex justify-between items-baseline mb-1">
+                                  <h3 className="text-[10pt] font-bold uppercase">{exp.role}</h3>
+                                  <span className="text-[9pt] font-bold opacity-60">{exp.duration}</span>
+                                </div>
+                                <div className="flex justify-between items-baseline mb-2 italic text-emerald-700 font-medium">
+                                  <span className="text-[9pt]">{exp.company}</span>
+                                  <span className="text-[8pt]">{exp.location}</span>
+                                </div>
+                                <ul className="list-disc list-outside ml-4 space-y-1">
+                                  {exp.bullets.map((bullet, bIdx) => (
+                                    <li key={bIdx} className="text-[9pt] leading-snug pl-1">{bullet}</li>
+                                  ))}
+                                </ul>
                               </div>
                             ))}
                           </div>
                         </div>
 
-                        {/* Experience */}
-                        <div 
-                          onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'experience' })}
-                          className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
-                          style={{ 
-                            fontFamily: getSectionStyle('experience').fontFamily, 
-                            fontSize: `${getSectionStyle('experience').fontSize}pt`,
-                            textAlign: getSectionStyle('experience').textAlign,
-                            lineHeight: getSectionStyle('experience').lineHeight,
-                            color: getSectionStyle('experience').color,
-                            letterSpacing: `${getSectionStyle('experience').letterSpacing}px`,
-                            textTransform: getSectionStyle('experience').textTransform,
-                            fontWeight: getSectionStyle('experience').fontWeight,
-                            fontStyle: getSectionStyle('experience').fontStyle,
-                            textDecoration: getSectionStyle('experience').textDecoration
-                          }}
-                        >
-                          <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest flex items-center">
-                            <span className="bg-white pr-2">Professional Experience</span>
-                            <div className="flex-1 h-[1px] bg-black/20"></div>
-                          </h2>
-                          {(results[activeAudience]?.experience || []).map((exp, i) => (
-                            <div key={i} className="mb-4">
-                              <div className="flex justify-between font-bold items-baseline">
-                                <span className="text-[1.1em]">{exp.role.toUpperCase()}</span>
-                                <span className="text-[0.9em] opacity-70">{exp.duration}</span>
-                              </div>
-                              <div className="italic font-medium mb-1 opacity-80">{exp.company}</div>
-                              <div className="space-y-1">
-                                {exp.bullets.map((b, bi) => (
-                                  <div key={bi} className="flex items-start gap-2">
-                                    <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
-                                    <span>{b}</span>
-                                  </div>
+                        {/* Projects Section */}
+                        {results[activeAudience]?.projects && results[activeAudience].projects.length > 0 && (
+                          <div 
+                            onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'projects' })}
+                            className={`mb-8 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'projects' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                            style={{ 
+                              fontFamily: getSectionStyle('projects').fontFamily, 
+                              fontSize: `${getSectionStyle('projects').fontSize}pt`,
+                              textAlign: getSectionStyle('projects').textAlign,
+                              lineHeight: getSectionStyle('projects').lineHeight,
+                              color: getSectionStyle('projects').color,
+                              letterSpacing: `${getSectionStyle('projects').letterSpacing}px`,
+                              textTransform: getSectionStyle('projects').textTransform,
+                              fontWeight: getSectionStyle('projects').fontWeight,
+                              fontStyle: getSectionStyle('projects').fontStyle,
+                              textDecoration: getSectionStyle('projects').textDecoration
+                            }}
+                          >
+                            <h2 className="text-[11pt] font-bold border-b border-black/20 mb-3 uppercase tracking-widest text-emerald-800">
+                              Strategic Projects
+                            </h2>
+                            <div className="space-y-4">
+                              {results[activeAudience].projects.map((proj, i) => (
+                                <div key={i}>
+                                  <div className="font-bold text-[10pt]">{proj.title}</div>
+                                  <div className="text-[9pt] opacity-80 leading-relaxed">{proj.description}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Skills & Certifications - Two Column Layout */}
+                        <div className="grid grid-cols-2 gap-8">
+                          {/* Skills */}
+                          <div 
+                            onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'skills' })}
+                            className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                            style={{ 
+                              fontFamily: getSectionStyle('skills').fontFamily, 
+                              fontSize: `${getSectionStyle('skills').fontSize}pt`,
+                              textAlign: getSectionStyle('skills').textAlign,
+                              lineHeight: getSectionStyle('skills').lineHeight,
+                              color: getSectionStyle('skills').color,
+                              letterSpacing: `${getSectionStyle('skills').letterSpacing}px`,
+                              textTransform: getSectionStyle('skills').textTransform,
+                              fontWeight: getSectionStyle('skills').fontWeight,
+                              fontStyle: getSectionStyle('skills').fontStyle,
+                              textDecoration: getSectionStyle('skills').textDecoration
+                            }}
+                          >
+                            <h2 className="text-[11pt] font-bold border-b border-black/20 mb-3 uppercase tracking-widest text-emerald-800">
+                              Core Competencies
+                            </h2>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              {(results[activeAudience]?.skills || masterResume.core_competencies).map((skill, i) => (
+                                <div key={i} className="flex items-center gap-2 text-[9pt]">
+                                  <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+                                  <span>{skill}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Certifications & Education */}
+                          <div className="space-y-6">
+                            <div 
+                              onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
+                              className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                              style={{ 
+                                fontFamily: getSectionStyle('certifications').fontFamily, 
+                                fontSize: `${getSectionStyle('certifications').fontSize}pt`,
+                                textAlign: getSectionStyle('certifications').textAlign,
+                                lineHeight: getSectionStyle('certifications').lineHeight,
+                                color: getSectionStyle('certifications').color,
+                                letterSpacing: `${getSectionStyle('certifications').letterSpacing}px`,
+                                textTransform: getSectionStyle('certifications').textTransform,
+                                fontWeight: getSectionStyle('certifications').fontWeight,
+                                fontStyle: getSectionStyle('certifications').fontStyle,
+                                textDecoration: getSectionStyle('certifications').textDecoration
+                              }}
+                            >
+                              <h2 className="text-[11pt] font-bold border-b border-black/20 mb-3 uppercase tracking-widest text-emerald-800">
+                                Certifications
+                              </h2>
+                              <ul className="space-y-1">
+                                {masterResume.certifications.map((cert, i) => (
+                                  <li key={i} className="text-[9pt] flex items-start gap-2">
+                                    <CheckCircle2 className="w-3 h-3 mt-1 text-emerald-500 shrink-0" />
+                                    <span>{cert}</span>
+                                  </li>
                                 ))}
+                              </ul>
+                            </div>
+
+                            <div 
+                              onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'education' })}
+                              className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                              style={{ 
+                                fontFamily: getSectionStyle('education').fontFamily, 
+                                fontSize: `${getSectionStyle('education').fontSize}pt`,
+                                textAlign: getSectionStyle('education').textAlign,
+                                lineHeight: getSectionStyle('education').lineHeight,
+                                color: getSectionStyle('education').color,
+                                letterSpacing: `${getSectionStyle('education').letterSpacing}px`,
+                                textTransform: getSectionStyle('education').textTransform,
+                                fontWeight: getSectionStyle('education').fontWeight,
+                                fontStyle: getSectionStyle('education').fontStyle,
+                                textDecoration: getSectionStyle('education').textDecoration
+                              }}
+                            >
+                              <h2 className="text-[11pt] font-bold border-b border-black/20 mb-3 uppercase tracking-widest text-emerald-800">
+                                Education
+                              </h2>
+                              <div className="text-[9pt]">
+                                <p className="font-bold">{masterResume.education.degree}</p>
+                                <p className="italic text-emerald-700">{masterResume.education.institution}</p>
+                                <p className="opacity-60">Expected {masterResume.education.expected_completion}</p>
                               </div>
                             </div>
-                          ))}
-                        </div>
-
-                        {/* Certifications */}
-                        <div 
-                          onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
-                          className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
-                          style={{ 
-                            fontFamily: getSectionStyle('certifications').fontFamily, 
-                            fontSize: `${getSectionStyle('certifications').fontSize}pt`,
-                            textAlign: getSectionStyle('certifications').textAlign,
-                            lineHeight: getSectionStyle('certifications').lineHeight,
-                            color: getSectionStyle('certifications').color,
-                            letterSpacing: `${getSectionStyle('certifications').letterSpacing}px`,
-                            textTransform: getSectionStyle('certifications').textTransform,
-                            fontWeight: getSectionStyle('certifications').fontWeight,
-                            fontStyle: getSectionStyle('certifications').fontStyle,
-                            textDecoration: getSectionStyle('certifications').textDecoration
-                          }}
-                        >
-                          <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
-                            <span className="bg-white pr-2">Certifications</span>
-                            <div className="flex-1 h-[1px] bg-black/20"></div>
-                          </h2>
-                          <div className="grid grid-cols-1 gap-y-1">
-                            {masterResume.certifications.map((cert, i) => (
-                              <div key={i} className="flex items-start gap-2">
-                                <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
-                                <span className="text-black">{cert}</span>
-                              </div>
-                            ))}
                           </div>
-                        </div>
-
-                        {/* Education */}
-                        <div 
-                          onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'education' })}
-                          className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
-                          style={{ 
-                            fontFamily: getSectionStyle('education').fontFamily, 
-                            fontSize: `${getSectionStyle('education').fontSize}pt`,
-                            textAlign: getSectionStyle('education').textAlign,
-                            lineHeight: getSectionStyle('education').lineHeight,
-                            color: getSectionStyle('education').color,
-                            letterSpacing: `${getSectionStyle('education').letterSpacing}px`,
-                            textTransform: getSectionStyle('education').textTransform,
-                            fontWeight: getSectionStyle('education').fontWeight,
-                            fontStyle: getSectionStyle('education').fontStyle,
-                            textDecoration: getSectionStyle('education').textDecoration
-                          }}
-                        >
-                          <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
-                            <span className="bg-white pr-2">Education</span>
-                            <div className="flex-1 h-[1px] bg-black/20"></div>
-                          </h2>
-                          <div className="flex justify-between items-baseline">
-                            <span className="font-bold">{masterResume.education.degree}</span>
-                            <span className="text-[0.9em] opacity-70">Expected {masterResume.education.expected_completion}</span>
-                          </div>
-                          <div className="italic opacity-80">{masterResume.education.institution}</div>
                         </div>
                       </div>
                     </div>
@@ -1030,33 +1215,6 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                       </div>
 
                       <div className="mb-6" style={{ 
-                        fontFamily: getSectionStyle('skills').fontFamily, 
-                        fontSize: `${getSectionStyle('skills').fontSize}pt`,
-                        textAlign: getSectionStyle('skills').textAlign,
-                        lineHeight: getSectionStyle('skills').lineHeight,
-                        color: getSectionStyle('skills').color,
-                        letterSpacing: `${getSectionStyle('skills').letterSpacing}px`,
-                        textTransform: getSectionStyle('skills').textTransform,
-                        fontWeight: getSectionStyle('skills').fontWeight,
-                        fontStyle: getSectionStyle('skills').fontStyle,
-                        textDecoration: getSectionStyle('skills').textDecoration
-                      }}>
-                        <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest text-center flex items-center">
-                          <div className="flex-1 h-[1px] bg-gray-200"></div>
-                          <span className="px-4">SKILLS</span>
-                          <div className="flex-1 h-[1px] bg-gray-200"></div>
-                        </h2>
-                        <div className="grid grid-cols-1 gap-y-1">
-                          {(results[activeAudience]?.skills || []).map((s, i) => (
-                            <div key={i} className="flex items-start gap-2">
-                              <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
-                              <span>{s}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="mb-6" style={{ 
                         fontFamily: getSectionStyle('experience').fontFamily, 
                         fontSize: `${getSectionStyle('experience').fontSize}pt`,
                         textAlign: getSectionStyle('experience').textAlign,
@@ -1091,53 +1249,114 @@ ${masterResume.education.degree} - ${masterResume.education.institution} (Expect
                         ))}
                       </div>
 
-                      <div className="mb-6" style={{ 
-                        fontFamily: getSectionStyle('certifications').fontFamily, 
-                        fontSize: `${getSectionStyle('certifications').fontSize}pt`,
-                        textAlign: getSectionStyle('certifications').textAlign,
-                        lineHeight: getSectionStyle('certifications').lineHeight,
-                        color: getSectionStyle('certifications').color,
-                        letterSpacing: `${getSectionStyle('certifications').letterSpacing}px`,
-                        textTransform: getSectionStyle('certifications').textTransform,
-                        fontWeight: getSectionStyle('certifications').fontWeight,
-                        fontStyle: getSectionStyle('certifications').fontStyle,
-                        textDecoration: getSectionStyle('certifications').textDecoration
-                      }}>
-                        <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
-                          <span className="bg-white pr-2">Certifications</span>
-                          <div className="flex-1 h-[1px] bg-gray-200"></div>
-                        </h2>
-                        <div className="grid grid-cols-1 gap-y-1">
-                          {masterResume.certifications.map((cert, i) => (
-                            <div key={i} className="flex items-start gap-2">
-                              <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
-                              <span>{cert}</span>
+                      {/* Projects */}
+                      {results[activeAudience]?.projects && results[activeAudience].projects.length > 0 && (
+                        <div className="mb-6" style={{ 
+                          fontFamily: getSectionStyle('projects').fontFamily, 
+                          fontSize: `${getSectionStyle('projects').fontSize}pt`,
+                          textAlign: getSectionStyle('projects').textAlign,
+                          lineHeight: getSectionStyle('projects').lineHeight,
+                          color: getSectionStyle('projects').color,
+                          letterSpacing: `${getSectionStyle('projects').letterSpacing}px`,
+                          textTransform: getSectionStyle('projects').textTransform,
+                          fontWeight: getSectionStyle('projects').fontWeight,
+                          fontStyle: getSectionStyle('projects').fontStyle,
+                          textDecoration: getSectionStyle('projects').textDecoration
+                        }}>
+                          <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
+                            <span className="bg-white pr-2">Strategic Projects</span>
+                            <div className="flex-1 h-[1px] bg-gray-200"></div>
+                          </h2>
+                          {results[activeAudience].projects.map((proj, i) => (
+                            <div key={i} className="mb-3">
+                              <div className="font-bold">{proj.title}</div>
+                              <div className="text-[0.95em] opacity-80">{proj.description}</div>
                             </div>
                           ))}
                         </div>
-                      </div>
+                      )}
 
-                      <div className="mb-6" style={{ 
-                        fontFamily: getSectionStyle('education').fontFamily, 
-                        fontSize: `${getSectionStyle('education').fontSize}pt`,
-                        textAlign: getSectionStyle('education').textAlign,
-                        lineHeight: getSectionStyle('education').lineHeight,
-                        color: getSectionStyle('education').color,
-                        letterSpacing: `${getSectionStyle('education').letterSpacing}px`,
-                        textTransform: getSectionStyle('education').textTransform,
-                        fontWeight: getSectionStyle('education').fontWeight,
-                        fontStyle: getSectionStyle('education').fontStyle,
-                        textDecoration: getSectionStyle('education').textDecoration
-                      }}>
-                        <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
-                          <span className="bg-white pr-2">Education</span>
-                          <div className="flex-1 h-[1px] bg-gray-200"></div>
-                        </h2>
-                        <div className="flex justify-between items-baseline">
-                          <span className="font-bold">{masterResume.education.degree}</span>
-                          <span className="text-[0.9em] opacity-70">Expected {masterResume.education.expected_completion}</span>
+                      {/* Skills & Certifications - Two Column Layout */}
+                      <div className="grid grid-cols-2 gap-8">
+                        {/* Skills */}
+                        <div style={{ 
+                          fontFamily: getSectionStyle('skills').fontFamily, 
+                          fontSize: `${getSectionStyle('skills').fontSize}pt`,
+                          textAlign: getSectionStyle('skills').textAlign,
+                          lineHeight: getSectionStyle('skills').lineHeight,
+                          color: getSectionStyle('skills').color,
+                          letterSpacing: `${getSectionStyle('skills').letterSpacing}px`,
+                          textTransform: getSectionStyle('skills').textTransform,
+                          fontWeight: getSectionStyle('skills').fontWeight,
+                          fontStyle: getSectionStyle('skills').fontStyle,
+                          textDecoration: getSectionStyle('skills').textDecoration
+                        }}>
+                          <h2 className="text-sm font-bold border-b border-black mb-3 uppercase tracking-widest text-center flex items-center">
+                            <div className="flex-1 h-[1px] bg-gray-200"></div>
+                            <span className="px-4">SKILLS</span>
+                            <div className="flex-1 h-[1px] bg-gray-200"></div>
+                          </h2>
+                          <div className="grid grid-cols-1 gap-y-1">
+                            {(results[activeAudience]?.skills || []).map((s, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
+                                <span>{s}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="italic opacity-80">{masterResume.education.institution}</div>
+
+                        {/* Certifications & Education */}
+                        <div className="space-y-6">
+                          <div style={{ 
+                            fontFamily: getSectionStyle('certifications').fontFamily, 
+                            fontSize: `${getSectionStyle('certifications').fontSize}pt`,
+                            textAlign: getSectionStyle('certifications').textAlign,
+                            lineHeight: getSectionStyle('certifications').lineHeight,
+                            color: getSectionStyle('certifications').color,
+                            letterSpacing: `${getSectionStyle('certifications').letterSpacing}px`,
+                            textTransform: getSectionStyle('certifications').textTransform,
+                            fontWeight: getSectionStyle('certifications').fontWeight,
+                            fontStyle: getSectionStyle('certifications').fontStyle,
+                            textDecoration: getSectionStyle('certifications').textDecoration
+                          }}>
+                            <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
+                              <span className="bg-white pr-2">Certifications</span>
+                              <div className="flex-1 h-[1px] bg-gray-200"></div>
+                            </h2>
+                            <div className="grid grid-cols-1 gap-y-1">
+                              {masterResume.certifications.map((cert, i) => (
+                                <div key={i} className="flex items-start gap-2">
+                                  <span className="mt-1.5 w-1 h-1 rounded-full bg-black shrink-0"></span>
+                                  <span>{cert}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div style={{ 
+                            fontFamily: getSectionStyle('education').fontFamily, 
+                            fontSize: `${getSectionStyle('education').fontSize}pt`,
+                            textAlign: getSectionStyle('education').textAlign,
+                            lineHeight: getSectionStyle('education').lineHeight,
+                            color: getSectionStyle('education').color,
+                            letterSpacing: `${getSectionStyle('education').letterSpacing}px`,
+                            textTransform: getSectionStyle('education').textTransform,
+                            fontWeight: getSectionStyle('education').fontWeight,
+                            fontStyle: getSectionStyle('education').fontStyle,
+                            textDecoration: getSectionStyle('education').textDecoration
+                          }}>
+                            <h2 className="text-sm font-bold border-b border-black mb-2 uppercase tracking-widest flex items-center">
+                              <span className="bg-white pr-2">Education</span>
+                              <div className="flex-1 h-[1px] bg-gray-200"></div>
+                            </h2>
+                            <div className="flex justify-between items-baseline">
+                              <span className="font-bold">{masterResume.education.degree}</span>
+                              <span className="text-[0.9em] opacity-70">Expected {masterResume.education.expected_completion}</span>
+                            </div>
+                            <div className="opacity-80">{masterResume.education.institution}</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
