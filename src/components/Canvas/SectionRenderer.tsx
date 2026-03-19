@@ -126,7 +126,7 @@ export const SectionRenderer = ({ element }: { element: ResumeElement }) => {
             <input
               value={element.content.title}
               onChange={(e) => handleContentChange('title', e.target.value)}
-              className="bg-transparent border-none focus:ring-0 font-bold text-lg p-0 uppercase tracking-wider"
+              className="bg-transparent border-none focus:ring-0 p-0 w-full"
               placeholder="Section Title"
             />
             <button 
@@ -144,20 +144,20 @@ export const SectionRenderer = ({ element }: { element: ResumeElement }) => {
                     <input
                       value={isExp ? item.role : item.degree}
                       onChange={(e) => handleItemChange('items', idx, isExp ? 'role' : 'degree', e.target.value)}
-                      className="w-full bg-transparent border-none focus:ring-0 font-bold text-base p-0"
+                      className="w-full bg-transparent border-none focus:ring-0 font-bold p-0"
                       placeholder={isExp ? "Role" : "Degree"}
                     />
                     <input
                       value={isExp ? item.company : item.school}
                       onChange={(e) => handleItemChange('items', idx, isExp ? 'company' : 'school', e.target.value)}
-                      className="w-full bg-transparent border-none focus:ring-0 text-gray-700 p-0 italic"
+                      className="w-full bg-transparent border-none focus:ring-0 p-0 italic"
                       placeholder={isExp ? "Company" : "School"}
                     />
                   </div>
                   <input
                     value={item.period}
                     onChange={(e) => handleItemChange('items', idx, 'period', e.target.value)}
-                    className="bg-transparent border-none focus:ring-0 text-gray-500 text-sm p-0 text-right w-32"
+                    className="bg-transparent border-none focus:ring-0 p-0 text-right w-32 opacity-60"
                     placeholder="Period"
                   />
                 </div>
@@ -165,7 +165,7 @@ export const SectionRenderer = ({ element }: { element: ResumeElement }) => {
                   <textarea
                     value={item.description}
                     onChange={(e) => handleItemChange('items', idx, 'description', e.target.value)}
-                    className="w-full bg-transparent border-none focus:ring-0 text-sm text-gray-600 p-0 resize-none min-h-[60px]"
+                    className="w-full bg-transparent border-none focus:ring-0 p-0 resize-none min-h-[60px]"
                     placeholder="Describe your achievements..."
                   />
                 )}
@@ -188,7 +188,7 @@ export const SectionRenderer = ({ element }: { element: ResumeElement }) => {
             <input
               value={element.content.title}
               onChange={(e) => handleContentChange('title', e.target.value)}
-              className="bg-transparent border-none focus:ring-0 font-bold text-lg p-0 uppercase tracking-wider"
+              className="bg-transparent border-none focus:ring-0 p-0 w-full"
               placeholder="Section Title"
             />
           </div>
@@ -232,7 +232,7 @@ export const SectionRenderer = ({ element }: { element: ResumeElement }) => {
             <input
               value={element.content.title}
               onChange={(e) => handleContentChange('title', e.target.value)}
-              className="bg-transparent border-none focus:ring-0 font-bold text-lg p-0 uppercase tracking-wider"
+              className="bg-transparent border-none focus:ring-0 p-0 w-full"
               placeholder="Section Title"
             />
             <button 
@@ -247,7 +247,7 @@ export const SectionRenderer = ({ element }: { element: ResumeElement }) => {
           <textarea
             value={element.content.text}
             onChange={(e) => handleContentChange('text', e.target.value)}
-            className="w-full bg-transparent border-none focus:ring-0 text-sm text-gray-600 p-0 resize-none min-h-[80px]"
+            className="w-full bg-transparent border-none focus:ring-0 p-0 resize-none min-h-[80px]"
             placeholder="Enter your summary or content..."
           />
         </div>

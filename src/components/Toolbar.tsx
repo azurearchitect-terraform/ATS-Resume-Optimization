@@ -3,7 +3,8 @@ import {
   Bold, Italic, Underline, Strikethrough, 
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Type, Palette, RotateCcw, Undo2, Redo2,
-  ChevronDown, Search, CaseUpper, CaseLower, CaseSensitive
+  ChevronDown, Search, CaseUpper, CaseLower, CaseSensitive,
+  Plus, Minus
 } from 'lucide-react';
 import { useFormatting, SectionStyle, TextAlign, TextTransform, DEFAULT_STYLE } from '../context/FormattingContext';
 
@@ -101,16 +102,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({ isDarkMode }) => {
 
         {/* Font Size */}
         <div className="flex items-center gap-1">
+          <button 
+            onClick={() => updateStyle({ fontSize: Math.max(8, currentStyle.fontSize - 1) })}
+            className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-white/5 text-white' : 'hover:bg-black/5 text-black'}`}
+          >
+            <Minus className="w-3 h-3" />
+          </button>
           <input 
             type="number" 
-            className={`w-12 px-2 py-1.5 text-xs font-medium rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+            className={`w-12 px-2 py-1.5 text-xs font-medium rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 text-center ${
               isDarkMode ? 'bg-white/5 text-white' : 'bg-black/5 text-black'
             }`}
             value={currentStyle.fontSize}
             onChange={(e) => updateStyle({ fontSize: parseInt(e.target.value) || 8 })}
             min={8} max={72}
           />
-          <span className="text-[10px] opacity-40 font-bold">PT</span>
+          <button 
+            onClick={() => updateStyle({ fontSize: Math.min(72, currentStyle.fontSize + 1) })}
+            className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-white/5 text-white' : 'hover:bg-black/5 text-black'}`}
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+          <span className="text-[10px] opacity-40 font-bold ml-1">PT</span>
         </div>
       </div>
 
@@ -152,7 +165,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ isDarkMode }) => {
 
         {/* Alignment Group */}
         <div className={`flex items-center p-0.5 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
-          {(['left', 'center', 'right'] as TextAlign[]).map(align => (
+          {(['left', 'center', 'right', 'justify'] as TextAlign[]).map(align => (
             <button 
               key={align}
               onClick={() => updateStyle({ textAlign: align })}
@@ -165,6 +178,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ isDarkMode }) => {
               {align === 'left' && <AlignLeft className="w-3.5 h-3.5" />}
               {align === 'center' && <AlignCenter className="w-3.5 h-3.5" />}
               {align === 'right' && <AlignRight className="w-3.5 h-3.5" />}
+              {align === 'justify' && <AlignJustify className="w-3.5 h-3.5" />}
             </button>
           ))}
         </div>

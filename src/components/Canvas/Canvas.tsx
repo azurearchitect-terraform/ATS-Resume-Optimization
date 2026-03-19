@@ -101,6 +101,7 @@ const SortableSection = ({ element }: SortableSectionProps) => {
 
 export const Canvas = () => {
   const { elements, reorderElements, zoom, setZoom, showGrid, toggleGrid, selectElement, darkMode } = useResumeStore();
+  const [activeId, setActiveId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const sensors = useSensors(
@@ -114,6 +115,10 @@ export const Canvas = () => {
     })
   );
 
+  const handleDragStart = (event: any) => {
+    setActiveId(event.active.id);
+  };
+
   const handleDragEnd = (event: any) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -121,7 +126,10 @@ export const Canvas = () => {
       const newIndex = elements.findIndex((el) => el.id === over.id);
       reorderElements(arrayMove(elements, oldIndex, newIndex));
     }
+    setActiveId(null);
   };
+
+  const activeElement = elements.find(el => el.id === activeId);
 
   return (
     <main className={cn(
@@ -186,9 +194,21 @@ export const Canvas = () => {
             padding: '20mm',
           }}
         >
+          {/* Dynamic Alignment Guides */}
+          {activeId && (
+            <>
+              {/* Vertical Center Guide */}
+              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-indigo-500/30 -translate-x-1/2 z-50 pointer-events-none" />
+              {/* Margin Guides */}
+              <div className="absolute left-[20mm] top-0 bottom-0 w-px bg-indigo-500/10 z-50 pointer-events-none" />
+              <div className="absolute right-[20mm] top-0 bottom-0 w-px bg-indigo-500/10 z-50 pointer-events-none" />
+            </>
+          )}
+
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
             <SortableContext
@@ -201,6 +221,31 @@ export const Canvas = () => {
                 ))}
               </div>
             </SortableContext>
+
+            <DragOverlay dropAnimation={null}>
+              {activeId ? (
+                <div className="bg-white shadow-2xl border-2 border-indigo-500 opacity-80 scale-105 transition-transform">
+                  <div 
+                    className="w-full"
+                    style={{
+                      fontFamily: activeElement?.style.fontFamily,
+                      fontSize: `${activeElement?.style.fontSize}px`,
+                      fontWeight: activeElement?.style.fontWeight,
+                      fontStyle: activeElement?.style.fontStyle,
+                      textDecoration: activeElement?.style.textDecoration,
+                      textAlign: activeElement?.style.textAlign,
+                      lineHeight: activeElement?.style.lineHeight,
+                      letterSpacing: `${activeElement?.style.letterSpacing}px`,
+                      color: activeElement?.style.color,
+                      backgroundColor: activeElement?.style.backgroundColor,
+                      padding: `${activeElement?.style.padding}px`,
+                    }}
+                  >
+                    {activeElement && <SectionRenderer element={activeElement} />}
+                  </div>
+                </div>
+              ) : null}
+            </DragOverlay>
           </DndContext>
         </div>
       </div>
