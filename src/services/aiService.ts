@@ -5,7 +5,8 @@ export const optimizeFullResume = async (
   masterResume: any,
   jobDescription: string,
   targetRole: string,
-  aiEngine: string = "gemini-3.1-pro-preview"
+  aiEngine: string = "gemini-3.1-pro-preview",
+  audience: string = "Enterprise"
 ) => {
   try {
     const result = await optimizeResume(
@@ -13,7 +14,7 @@ export const optimizeFullResume = async (
       jobDescription,
       targetRole,
       "balanced",
-      "Enterprise",
+      audience,
       { engine: 'gemini', model: aiEngine }
     );
 

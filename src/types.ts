@@ -1,0 +1,75 @@
+export interface ResumeData {
+  personal_info: {
+    name: string;
+    email: string;
+    phone: string;
+    location: string;
+    summary: string;
+  };
+  experience: Experience[];
+  early_career?: string[];
+  skills: string[] | {
+    infrastructure: string[];
+    devsecops: string[];
+    governance: string[];
+    observability: string[];
+  };
+  education: (Education | string)[];
+  projects?: (Project | string)[];
+  certifications?: string[];
+}
+
+export interface Experience {
+  id: string;
+  company: string;
+  role: string;
+  duration: string;
+  bullets: string[];
+  isOptional?: boolean;
+}
+
+export interface Education {
+  institution: string;
+  degree: string;
+  expected_completion: string;
+}
+
+export interface Project {
+  title: string;
+  description: string;
+  isOptional: true;
+}
+
+export interface LayoutBlock {
+  id: string;
+  type: 'header' | 'summary' | 'section_header' | 'experience_item' | 'skill_grid' | 'education_item' | 'project_item';
+  content: any;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pageIndex: number;
+}
+
+export interface ResumeTemplate {
+  id: string;
+  name: string;
+  sectionOrder: string[];
+  typography: {
+    fontFamily: string;
+    headerSize: number;
+    sectionTitleSize: number;
+    bodySize: number;
+    lineHeight: number;
+  };
+  spacing: {
+    margins: { top: number; right: number; bottom: number; left: number };
+    sectionGap: number;
+    itemGap: number;
+    bulletGap: number;
+  };
+  styles: {
+    alignment: 'left' | 'center';
+    dividerStyle: 'line' | 'none';
+  };
+}

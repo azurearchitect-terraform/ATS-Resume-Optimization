@@ -29,13 +29,37 @@ const FONT_FAMILIES = [
   'Poppins',
   'Lora',
   'Merriweather',
-  'Space Grotesk'
+  'Space Grotesk',
+  'JetBrains Mono',
+  'Dancing Script',
+  'Pacifico',
+  'Caveat',
+  'Oswald',
+  'Ubuntu',
+  'Raleway',
+  'PT Sans',
+  'PT Serif',
+  'Arvo',
+  'Crimson Text',
+  'Quicksand',
+  'Josefin Sans',
+  'Libre Baskerville',
+  'Bebas Neue',
+  'Abril Fatface',
+  'Lobster',
+  'Shadows Into Light',
+  'Indie Flower',
+  'Architects Daughter',
+  'Permanent Marker',
+  'Satisfy',
+  'Courgette',
+  'Great Vibes'
 ];
 
 export const PropertiesPanel = () => {
-  const { selectedElementId, elements, updateElementStyle, undo, redo, historyIndex, history, darkMode } = useResumeStore();
+  const { selectedElementIds, elements, updateElementStyle, undo, redo, historyIndex, history, darkMode } = useResumeStore();
   
-  const selectedElement = elements.find(el => el.id === selectedElementId);
+  const selectedElement = elements.find(el => el.id === selectedElementIds[0]);
 
   if (!selectedElement) {
     return (
@@ -60,9 +84,9 @@ export const PropertiesPanel = () => {
   const style = selectedElement.style;
 
   const handleStyleChange = (updates: any) => {
-    if (selectedElementId) {
-      updateElementStyle(selectedElementId, updates);
-    }
+    selectedElementIds.forEach(id => {
+      updateElementStyle(id, updates);
+    });
   };
 
   return (
@@ -112,18 +136,38 @@ export const PropertiesPanel = () => {
           <div className="space-y-4">
             <div>
               <label className={cn("text-[10px] font-bold uppercase mb-1 block", darkMode ? "text-gray-400" : "text-gray-500")}>Font Family</label>
-              <select 
-                value={style.fontFamily}
-                onChange={(e) => handleStyleChange({ fontFamily: e.target.value })}
-                className={cn(
-                  "w-full text-sm border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-colors",
-                  darkMode ? "bg-gray-700 border-gray-600 text-gray-200" : "bg-white border-gray-200 text-gray-900"
+              <div className="space-y-2">
+                <select 
+                  value={FONT_FAMILIES.includes(style.fontFamily || '') ? style.fontFamily : 'custom'}
+                  onChange={(e) => {
+                    if (e.target.value !== 'custom') {
+                      handleStyleChange({ fontFamily: e.target.value });
+                    }
+                  }}
+                  className={cn(
+                    "w-full text-sm border rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-colors",
+                    darkMode ? "bg-gray-700 border-gray-600 text-gray-200" : "bg-white border-gray-200 text-gray-900"
+                  )}
+                >
+                  {FONT_FAMILIES.map(font => (
+                    <option key={font} value={font}>{font}</option>
+                  ))}
+                  <option value="custom">Custom Font...</option>
+                </select>
+                
+                {(!FONT_FAMILIES.includes(style.fontFamily || '') || style.fontFamily === 'custom') && (
+                  <input 
+                    type="text"
+                    placeholder="Enter font name (e.g. Arial, Helvetica)"
+                    value={style.fontFamily === 'custom' ? '' : style.fontFamily}
+                    onChange={(e) => handleStyleChange({ fontFamily: e.target.value })}
+                    className={cn(
+                      "w-full text-sm border rounded-lg p-2 outline-none transition-colors",
+                      darkMode ? "bg-gray-700 border-gray-600 text-gray-200" : "bg-white border-gray-200 text-gray-900"
+                    )}
+                  />
                 )}
-              >
-                {FONT_FAMILIES.map(font => (
-                  <option key={font} value={font}>{font}</option>
-                ))}
-              </select>
+              </div>
             </div>
 
             <div className="flex gap-4">
@@ -131,8 +175,11 @@ export const PropertiesPanel = () => {
                 <label className={cn("text-[10px] font-bold uppercase mb-1 block", darkMode ? "text-gray-400" : "text-gray-500")}>Size</label>
                 <input 
                   type="number"
-                  value={style.fontSize}
-                  onChange={(e) => handleStyleChange({ fontSize: parseInt(e.target.value) })}
+                  value={style.fontSize || 14}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val)) handleStyleChange({ fontSize: val });
+                  }}
                   className={cn(
                     "w-full text-sm border rounded-lg p-2 outline-none transition-colors",
                     darkMode ? "bg-gray-700 border-gray-600 text-gray-200" : "bg-white border-gray-200 text-gray-900"
@@ -238,6 +285,45 @@ export const PropertiesPanel = () => {
               >
                 <Underline size={16} className="mx-auto" />
               </button>
+            </div>
+
+            <div>
+              <label className={cn("text-[10px] font-bold uppercase mb-1 block", darkMode ? "text-gray-400" : "text-gray-500")}>Case</label>
+              <div className={cn("flex items-center gap-1 p-1 rounded-xl transition-colors", darkMode ? "bg-gray-900" : "bg-gray-50")}>
+                <button 
+                  onClick={() => handleStyleChange({ textTransform: 'none' })}
+                  className={cn(
+                    "flex-1 py-1 text-[10px] font-bold rounded-lg transition-all", 
+                    style.textTransform === 'none' || !style.textTransform
+                      ? (darkMode ? "bg-gray-700 shadow-sm text-indigo-400" : "bg-white shadow-sm text-indigo-600") 
+                      : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                  )}
+                >
+                  Aa
+                </button>
+                <button 
+                  onClick={() => handleStyleChange({ textTransform: 'uppercase' })}
+                  className={cn(
+                    "flex-1 py-1 text-[10px] font-bold rounded-lg transition-all", 
+                    style.textTransform === 'uppercase' 
+                      ? (darkMode ? "bg-gray-700 shadow-sm text-indigo-400" : "bg-white shadow-sm text-indigo-600") 
+                      : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                  )}
+                >
+                  AA
+                </button>
+                <button 
+                  onClick={() => handleStyleChange({ textTransform: 'lowercase' })}
+                  className={cn(
+                    "flex-1 py-1 text-[10px] font-bold rounded-lg transition-all", 
+                    style.textTransform === 'lowercase' 
+                      ? (darkMode ? "bg-gray-700 shadow-sm text-indigo-400" : "bg-white shadow-sm text-indigo-600") 
+                      : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                  )}
+                >
+                  aa
+                </button>
+              </div>
             </div>
           </div>
         </section>

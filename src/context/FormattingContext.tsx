@@ -1,136 +1,62 @@
-import React, { createContext, useContext, useReducer, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, ReactNode } from 'react';
 
-export type TextTransform = 'none' | 'uppercase' | 'lowercase' | 'capitalize';
-export type TextAlign = 'left' | 'center' | 'right' | 'justify';
-
-export interface SectionStyle {
-  fontFamily: string;
-  fontSize: number;
-  fontWeight: 'normal' | 'bold';
-  fontStyle: 'normal' | 'italic';
-  textDecoration: 'none' | 'underline' | 'line-through';
-  color: string;
-  textAlign: TextAlign;
-  lineHeight: number;
-  letterSpacing: number;
-  textTransform: TextTransform;
-}
+export const DEFAULT_STYLE = {
+  fontFamily: 'Inter',
+  fontSize: 10.5,
+  lineHeight: 1.4,
+  color: '#1a1a1a',
+};
 
 interface FormattingState {
   activeSection: string | null;
-  styles: Record<string, SectionStyle>;
-  history: {
-    past: Record<string, SectionStyle>[];
-    future: Record<string, SectionStyle>[];
-  };
+  styles: Record<string, any>;
 }
 
 type FormattingAction =
-  | { type: 'SET_ACTIVE_SECTION'; sectionId: string }
-  | { type: 'UPDATE_STYLE'; sectionId: string; updates: Partial<SectionStyle> }
-  | { type: 'UNDO' }
-  | { type: 'REDO' }
-  | { type: 'RESET'; sectionId: string };
+  | { type: 'SET_ACTIVE_SECTION'; sectionId: string | null }
+  | { type: 'UPDATE_STYLE'; sectionId: string; style: any };
 
-export const DEFAULT_STYLE: SectionStyle = {
-  fontFamily: 'Inter',
-  fontSize: 11,
-  fontWeight: 'normal',
-  fontStyle: 'normal',
-  textDecoration: 'none',
-  color: '#000000',
-  textAlign: 'left',
-  lineHeight: 1.5,
-  letterSpacing: 0,
-  textTransform: 'none',
+const initialState: FormattingState = {
+  activeSection: null,
+  styles: {},
 };
-
-const FormattingContext = createContext<{
-  state: FormattingState;
-  dispatch: React.Dispatch<FormattingAction>;
-} | null>(null);
 
 function formattingReducer(state: FormattingState, action: FormattingAction): FormattingState {
   switch (action.type) {
     case 'SET_ACTIVE_SECTION':
       return { ...state, activeSection: action.sectionId };
-
-    case 'UPDATE_STYLE': {
-      const currentStyles = state.styles[action.sectionId] || (action.sectionId.startsWith('exp-') ? state.styles['experience'] : DEFAULT_STYLE);
-      const newStyles = { ...state.styles, [action.sectionId]: { ...currentStyles, ...action.updates } };
+    case 'UPDATE_STYLE':
       return {
         ...state,
-        styles: newStyles,
-        history: {
-          past: [...state.history.past, state.styles],
-          future: [],
+        styles: {
+          ...state.styles,
+          [action.sectionId]: { ...state.styles[action.sectionId], ...action.style },
         },
       };
-    }
-
-    case 'UNDO': {
-      if (state.history.past.length === 0) return state;
-      const previous = state.history.past[state.history.past.length - 1];
-      const newPast = state.history.past.slice(0, -1);
-      return {
-        ...state,
-        styles: previous,
-        history: {
-          past: newPast,
-          future: [state.styles, ...state.history.future],
-        },
-      };
-    }
-
-    case 'REDO': {
-      if (state.history.future.length === 0) return state;
-      const next = state.history.future[0];
-      const newFuture = state.history.future.slice(1);
-      return {
-        ...state,
-        styles: next,
-        history: {
-          past: [...state.history.past, state.styles],
-          future: newFuture,
-        },
-      };
-    }
-
-    case 'RESET':
-      return {
-        ...state,
-        styles: { ...state.styles, [action.sectionId]: DEFAULT_STYLE },
-      };
-
     default:
       return state;
   }
 }
 
-export const FormattingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, dispatch] = useReducer(formattingReducer, {
-    activeSection: 'header',
-    styles: {
-      header: { ...DEFAULT_STYLE, fontSize: 24, fontWeight: 'bold', textAlign: 'center', letterSpacing: 1, textTransform: 'uppercase' },
-      summary: { ...DEFAULT_STYLE, fontSize: 10, textAlign: 'justify', lineHeight: 1.4 },
-      experience: { ...DEFAULT_STYLE, fontSize: 10, textAlign: 'justify', lineHeight: 1.4 },
-      skills: { ...DEFAULT_STYLE, fontSize: 9, lineHeight: 1.2 },
-      education: { ...DEFAULT_STYLE, fontSize: 9, lineHeight: 1.2 },
-      certifications: { ...DEFAULT_STYLE, fontSize: 9, lineHeight: 1.2 },
-      projects: { ...DEFAULT_STYLE, fontSize: 10, textAlign: 'justify', lineHeight: 1.4 },
-    },
-    history: { past: [], future: [] },
-  });
+const FormattingContext = createContext<{
+  state: FormattingState;
+  dispatch: React.Dispatch<FormattingAction>;
+} | undefined>(undefined);
+
+export function FormattingProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(formattingReducer, initialState);
 
   return (
     <FormattingContext.Provider value={{ state, dispatch }}>
       {children}
     </FormattingContext.Provider>
   );
-};
+}
 
-export const useFormatting = () => {
+export function useFormatting() {
   const context = useContext(FormattingContext);
-  if (!context) throw new Error('useFormatting must be used within FormattingProvider');
+  if (context === undefined) {
+    throw new Error('useFormatting must be used within a FormattingProvider');
+  }
   return context;
-};
+}

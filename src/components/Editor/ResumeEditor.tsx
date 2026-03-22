@@ -1,54 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Sidebar } from '../Sidebar/Sidebar';
 import { Canvas } from '../Canvas/Canvas';
 import { PropertiesPanel } from '../Properties/PropertiesPanel';
 import { Download, Share2, Save, Sparkles, ChevronLeft, Loader2, Moon, Sun } from 'lucide-react';
-import { domToCanvas } from 'modern-screenshot';
-import jsPDF from 'jspdf';
 import { useResumeStore } from '../../store/useResumeStore';
 import { ComparisonModal } from '../ComparisonModal';
 import { cn } from '../../lib/utils';
 
 export const ResumeEditor = () => {
-  const [isDownloading, setIsDownloading] = useState(false);
-  const { darkMode, toggleDarkMode } = useResumeStore();
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const { darkMode, toggleDarkMode, showGrid, setShowGrid, setIsExporting } = useResumeStore();
+  const stageRef = useRef<any>(null);
 
-  const downloadPDF = async () => {
-    const element = document.getElementById('resume-canvas');
-    if (!element) return;
-
-    setIsDownloading(true);
-    try {
-      // Temporarily remove transform for clean capture
-      const originalTransform = element.style.transform;
-      element.style.transform = 'none';
-      
-      const canvas = await domToCanvas(element, {
-        scale: 2, // Higher scale for better quality
-        backgroundColor: '#ffffff'
-      });
-
-      // Restore transform
-      element.style.transform = originalTransform;
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save('resume.pdf');
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      alert('Failed to generate PDF. Please try again.');
-    } finally {
-      setIsDownloading(false);
+  const handlePreview = () => {
+    if (stageRef.current) {
+      setIsPreviewOpen(true);
+    } else {
+      alert("Canvas not ready");
     }
   };
 
@@ -105,12 +73,11 @@ export const ResumeEditor = () => {
             Share
           </button>
           <button 
-            onClick={downloadPDF}
-            disabled={isDownloading}
-            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
+            onClick={handlePreview}
+            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all"
           >
-            {isDownloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            {isDownloading ? 'Generating...' : 'Download PDF'}
+            <Download size={16} />
+            Preview & Download
           </button>
         </div>
       </header>
@@ -118,7 +85,7 @@ export const ResumeEditor = () => {
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
         <Sidebar />
-        <Canvas />
+        <Canvas stageRef={stageRef} />
         <PropertiesPanel />
       </div>
 

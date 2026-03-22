@@ -1,43 +1,44 @@
 import { create } from 'zustand';
-import { ResumeElement, ResumeStyle, ElementType } from '../types/resume';
+import { CanvasElement, ElementStyle, ElementType } from '../types/resume';
 import masterResume from '../master-resume.json';
 
 interface ResumeStore {
-  elements: ResumeElement[];
-  selectedElementId: string | null;
-  history: ResumeElement[][];
+  elements: CanvasElement[];
+  selectedElementIds: string[];
+  history: CanvasElement[][];
   historyIndex: number;
   zoom: number;
   showGrid: boolean;
   darkMode: boolean;
+  isExporting: boolean;
   
   // AI Config
   jobDescription: string;
   targetRole: string;
+  audience: string;
   isOptimizing: boolean;
   aiEngine: string;
-  comparisonData: {
-    original: ResumeElement[];
-    optimized: ResumeElement[];
-    isVisible: boolean;
-  } | null;
+  comparisonData: any | null;
 
   // Actions
-  addElement: (type: ElementType) => void;
+  addElement: (type: ElementType, content?: string, x?: number, y?: number) => void;
   removeElement: (id: string) => void;
-  updateElement: (id: string, updates: Partial<ResumeElement>) => void;
-  updateElementStyle: (id: string, style: Partial<ResumeStyle>) => void;
-  selectElement: (id: string | null) => void;
-  reorderElements: (newElements: ResumeElement[]) => void;
-  toggleVisibility: (id: string) => void;
+  updateElement: (id: string, updates: Partial<CanvasElement>) => void;
+  updateMultipleElements: (ids: string[], updates: Partial<CanvasElement>) => void;
+  updateElementStyle: (id: string, style: Partial<ElementStyle>) => void;
+  selectElement: (id: string | null, isMulti?: boolean) => void;
+  setIsExporting: (val: boolean) => void;
   setZoom: (zoom: number) => void;
   toggleGrid: () => void;
   toggleDarkMode: () => void;
   resetResume: () => void;
-  updateConfig: (updates: { jobDescription?: string; targetRole?: string; aiEngine?: string }) => void;
+  updateConfig: (updates: { jobDescription?: string; targetRole?: string; audience?: string; aiEngine?: string }) => void;
   setIsOptimizing: (val: boolean) => void;
-  setComparisonData: (data: { original: ResumeElement[]; optimized: ResumeElement[]; isVisible: boolean } | null) => void;
-  applyOptimization: (optimizedElements: ResumeElement[]) => void;
+  setComparisonData: (data: any | null) => void;
+  applyOptimization: (optimizedElements: CanvasElement[]) => void;
+  toggleVisibility: (id: string) => void;
+  setShowGrid: (show: boolean) => void;
+  reorderElements: (startIndex: number, endIndex: number) => void;
   
   // History
   undo: () => void;
@@ -45,7 +46,7 @@ interface ResumeStore {
   saveToHistory: () => void;
 }
 
-const DEFAULT_STYLE: ResumeStyle = {
+const DEFAULT_STYLE: ElementStyle = {
   fontFamily: 'Inter',
   fontSize: 14,
   fontWeight: 'normal',
@@ -56,89 +57,178 @@ const DEFAULT_STYLE: ResumeStyle = {
   letterSpacing: 0,
   color: '#1a1a1a',
   backgroundColor: 'transparent',
-  padding: 16,
-  margin: 8,
+  padding: 0,
+  margin: 0,
   borderRadius: 0,
+  opacity: 1,
 };
 
-const INITIAL_ELEMENTS: ResumeElement[] = [
+const INITIAL_ELEMENTS: CanvasElement[] = [
   {
-    id: 'header-1',
-    type: 'header',
-    content: {
-      name: masterResume.personal_info.name,
-      title: masterResume.personal_info.title,
-      email: masterResume.personal_info.email,
-      phone: masterResume.personal_info.phone,
-      location: masterResume.personal_info.location,
-      website: masterResume.personal_info.website,
-      avatar: 'https://picsum.photos/seed/avatar/150/150',
-    },
+    id: 'name',
+    type: 'text' as ElementType,
+    content: masterResume.personal_info.name,
+    x: 75,
+    y: 60,
+    width: 643.7,
+    height: 50,
     style: { ...DEFAULT_STYLE, fontSize: 32, fontWeight: 'bold', textAlign: 'center' },
     isVisible: true,
   },
   {
-    id: 'summary-1',
-    type: 'text',
-    content: {
-      title: 'Professional Summary',
-      text: masterResume.personal_info.summary,
-    },
-    style: DEFAULT_STYLE,
+    id: 'contact',
+    type: 'text' as ElementType,
+    content: `${masterResume.personal_info.location} | ${masterResume.personal_info.email} | ${masterResume.personal_info.phone}`,
+    x: 75,
+    y: 115,
+    width: 643.7,
+    height: 30,
+    style: { ...DEFAULT_STYLE, fontSize: 12, textAlign: 'center' },
     isVisible: true,
   },
   {
-    id: 'experience-1',
-    type: 'experience',
-    content: {
-      title: 'Experience',
-      items: masterResume.experience,
-    },
-    style: DEFAULT_STYLE,
+    id: 'summary-title',
+    type: 'text' as ElementType,
+    content: 'PROFESSIONAL SUMMARY',
+    x: 75,
+    y: 170,
+    width: 643.7,
+    height: 30,
+    style: { ...DEFAULT_STYLE, fontSize: 16, fontWeight: 'bold' },
     isVisible: true,
   },
   {
-    id: 'skills-1',
-    type: 'skills',
-    content: {
-      title: 'Skills',
-      items: masterResume.skills,
-    },
-    style: DEFAULT_STYLE,
+    id: 'summary-text',
+    type: 'text' as ElementType,
+    content: (masterResume as any).professional_summary_base,
+    x: 75,
+    y: 200,
+    width: 643.7,
+    height: 80,
+    style: { ...DEFAULT_STYLE, fontSize: 11, textAlign: 'justify' },
     isVisible: true,
   },
   {
-    id: 'projects-1',
-    type: 'projects',
-    content: {
-      title: 'Projects',
-      items: masterResume.projects,
-    },
-    style: DEFAULT_STYLE,
+    id: 'experience-title',
+    type: 'text' as ElementType,
+    content: 'PROFESSIONAL EXPERIENCE',
+    x: 75,
+    y: 300,
+    width: 643.7,
+    height: 30,
+    style: { ...DEFAULT_STYLE, fontSize: 16, fontWeight: 'bold' },
+    isVisible: true,
+  },
+  ...masterResume.experience.flatMap((exp, i) => {
+    // Calculate Y position with page break awareness
+    // Page 1 ends at ~1122. Page 2 starts with a margin.
+    const itemHeight = 210; // Increased to fill more space
+    const startY = 340;
+    let y = startY + (i * itemHeight);
+    
+    // Page boundary is 1122.5
+    // We want to avoid splitting an entry.
+    // If the entry (header + duration + bullets) crosses 1122.5, move to next page.
+    if (y + itemHeight > 1100 && y < 1122.5) {
+      y = 1122.5 + 60; // Start at top of page 2 with 60px margin
+    } else if (y >= 1122.5 && y < 1122.5 + 60) {
+      y = 1122.5 + 60;
+    }
+
+    return [
+      {
+        id: `exp-header-${i}`,
+        type: 'text' as ElementType,
+        content: `${exp.role} | ${exp.company}`,
+        x: 75,
+        y: y,
+        width: 643.7,
+        height: 25,
+        style: { ...DEFAULT_STYLE, fontSize: 13, fontWeight: 'bold' },
+        isVisible: true,
+      },
+      {
+        id: `exp-duration-${i}`,
+        type: 'text' as ElementType,
+        content: `${exp.duration} | ${exp.location}`,
+        x: 75,
+        y: y + 25,
+        width: 643.7,
+        height: 20,
+        style: { ...DEFAULT_STYLE, fontSize: 11, fontStyle: 'italic' as 'italic' },
+        isVisible: true,
+      },
+      {
+        id: `exp-bullets-${i}`,
+        type: 'text' as ElementType,
+        content: exp.bullets.map(b => `• ${b}`).join('\n'),
+        x: 75,
+        y: y + 45,
+        width: 643.7,
+        height: 140,
+        style: { ...DEFAULT_STYLE, fontSize: 10, lineHeight: 1.5 },
+        isVisible: true,
+      }
+    ];
+  }),
+  {
+    id: 'skills-title',
+    type: 'text' as ElementType,
+    content: 'CORE COMPETENCIES',
+    x: 75,
+    y: 2000,
+    width: 643.7,
+    height: 30,
+    style: { ...DEFAULT_STYLE, fontSize: 16, fontWeight: 'bold' },
     isVisible: true,
   },
   {
-    id: 'education-1',
-    type: 'education',
-    content: {
-      title: 'Education',
-      items: masterResume.education,
-    },
-    style: DEFAULT_STYLE,
+    id: 'skills-text',
+    type: 'text' as ElementType,
+    content: (masterResume as any).core_competencies.join(' • '),
+    x: 75,
+    y: 2030,
+    width: 643.7,
+    height: 80,
+    style: { ...DEFAULT_STYLE, fontSize: 11, textAlign: 'center' },
     isVisible: true,
   },
-];
+  {
+    id: 'education-title',
+    type: 'text' as ElementType,
+    content: 'EDUCATION',
+    x: 75,
+    y: 2120,
+    width: 643.7,
+    height: 30,
+    style: { ...DEFAULT_STYLE, fontSize: 16, fontWeight: 'bold' },
+    isVisible: true,
+  },
+  {
+    id: 'education-text',
+    type: 'text' as ElementType,
+    content: `${masterResume.education.degree} | ${masterResume.education.institution} (Expected ${masterResume.education.expected_completion})`,
+    x: 75,
+    y: 2150,
+    width: 643.7,
+    height: 30,
+    style: { ...DEFAULT_STYLE, fontSize: 12 },
+    isVisible: true,
+  }
+] as any[] as CanvasElement[];
 
 export const useResumeStore = create<ResumeStore>((set, get) => ({
   elements: INITIAL_ELEMENTS,
-  selectedElementId: null,
+  selectedElementIds: [],
   history: [INITIAL_ELEMENTS],
   historyIndex: 0,
   zoom: 1,
-  showGrid: true,
+  showGrid: false,
   darkMode: false,
+  isExporting: false,
   jobDescription: '',
   targetRole: '',
+  audience: 'Technical Recruiter',
   isOptimizing: false,
   aiEngine: 'gemini-3-flash-preview',
   comparisonData: null,
@@ -146,55 +236,29 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   saveToHistory: () => {
     const { elements, history, historyIndex } = get();
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push([...elements]);
+    newHistory.push([...elements.map(el => ({ ...el, style: { ...el.style } }))]);
     set({
       history: newHistory,
       historyIndex: newHistory.length - 1,
     });
   },
 
-  addElement: (type) => {
+  addElement: (type, content = 'New Element', x = 100, y = 100) => {
     const id = `${type}-${Date.now()}`;
-    let content = {};
-
-    switch (type) {
-      case 'text':
-        content = { title: 'New Section', text: 'Enter your content here...' };
-        break;
-      case 'experience':
-        content = {
-          title: 'Experience',
-          items: [{ company: 'Company Name', role: 'Role', period: '2020 - Present', description: 'Key achievements...' }],
-        };
-        break;
-      case 'education':
-        content = {
-          title: 'Education',
-          items: [{ school: 'University Name', degree: 'Degree Name', period: '2016 - 2020' }],
-        };
-        break;
-      case 'skills':
-        content = { title: 'Skills', items: ['React', 'TypeScript', 'Tailwind CSS'] };
-        break;
-      case 'projects':
-        content = {
-          title: 'Projects',
-          items: [{ name: 'Project Name', description: 'Project description...', link: 'https://github.com' }],
-        };
-        break;
-    }
-
-    const newElement: ResumeElement = {
+    const newElement: CanvasElement = {
       id,
       type,
       content,
+      x,
+      y,
+      width: 200,
+      height: 50,
       style: { ...DEFAULT_STYLE },
-      isVisible: true,
     };
 
     set((state) => ({
       elements: [...state.elements, newElement],
-      selectedElementId: id,
+      selectedElementIds: [id],
     }));
     get().saveToHistory();
   },
@@ -202,7 +266,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   removeElement: (id) => {
     set((state) => ({
       elements: state.elements.filter((el) => el.id !== id),
-      selectedElementId: state.selectedElementId === id ? null : state.selectedElementId,
+      selectedElementIds: state.selectedElementIds.filter((sid) => sid !== id),
     }));
     get().saveToHistory();
   },
@@ -211,6 +275,14 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     set((state) => ({
       elements: state.elements.map((el) => (el.id === id ? { ...el, ...updates } : el)),
     }));
+    get().saveToHistory();
+  },
+
+  updateMultipleElements: (ids, updates) => {
+    set((state) => ({
+      elements: state.elements.map((el) => (ids.includes(el.id) ? { ...el, ...updates } : el)),
+    }));
+    get().saveToHistory();
   },
 
   updateElementStyle: (id, style) => {
@@ -222,10 +294,45 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     get().saveToHistory();
   },
 
-  selectElement: (id) => set({ selectedElementId: id }),
+  selectElement: (id, isMulti = false) => {
+    set((state) => {
+      if (!id) return { selectedElementIds: [] };
+      if (isMulti) {
+        const isSelected = state.selectedElementIds.includes(id);
+        if (isSelected) {
+          return { selectedElementIds: state.selectedElementIds.filter(sid => sid !== id) };
+        } else {
+          return { selectedElementIds: [...state.selectedElementIds, id] };
+        }
+      }
+      return { selectedElementIds: [id] };
+    });
+  },
 
-  reorderElements: (newElements) => {
-    set({ elements: newElements });
+  setIsExporting: (isExporting) => set({ isExporting }),
+
+  setZoom: (zoom) => set({ zoom }),
+  toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
+  setShowGrid: (showGrid) => set({ showGrid }),
+  toggleDarkMode: () => set((state) => ({ darkMode: !state.darkMode })),
+  
+  resetResume: () => {
+    set({
+      elements: INITIAL_ELEMENTS,
+      selectedElementIds: [],
+      history: [INITIAL_ELEMENTS],
+      historyIndex: 0,
+      zoom: 1,
+      showGrid: false,
+    });
+  },
+
+  updateConfig: (updates) => set((state) => ({ ...state, ...updates })),
+  setIsOptimizing: (val) => set({ isOptimizing: val }),
+  setComparisonData: (data) => set({ comparisonData: data }),
+  
+  applyOptimization: (optimizedElements) => {
+    set({ elements: optimizedElements });
     get().saveToHistory();
   },
 
@@ -238,28 +345,12 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     get().saveToHistory();
   },
 
-  setZoom: (zoom) => set({ zoom }),
-  toggleGrid: () => set((state) => ({ showGrid: !state.showGrid })),
-  toggleDarkMode: () => set((state) => ({ darkMode: !state.darkMode })),
-  
-  resetResume: () => {
-    set({
-      elements: INITIAL_ELEMENTS,
-      selectedElementId: null,
-      history: [INITIAL_ELEMENTS],
-      historyIndex: 0,
-      zoom: 1,
-      showGrid: true,
-    });
-  },
-
-  updateConfig: (updates) => set((state) => ({ ...state, ...updates })),
-  setIsOptimizing: (val) => set({ isOptimizing: val }),
-  setComparisonData: (data) => set({ comparisonData: data }),
-  applyOptimization: (optimizedElements) => {
-    set({
-      elements: optimizedElements,
-      comparisonData: null,
+  reorderElements: (startIndex, endIndex) => {
+    set((state) => {
+      const newElements = [...state.elements];
+      const [removed] = newElements.splice(startIndex, 1);
+      newElements.splice(endIndex, 0, removed);
+      return { elements: newElements };
     });
     get().saveToHistory();
   },

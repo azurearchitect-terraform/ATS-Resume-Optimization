@@ -1,10 +1,10 @@
-export type ElementType = 'header' | 'text' | 'experience' | 'education' | 'skills' | 'projects';
+export type ElementType = 'text' | 'image' | 'shape';
 
-export interface ResumeStyle {
+export interface ElementStyle {
   fontFamily?: string;
   fontSize?: number;
-  fontWeight?: string;
-  fontStyle?: string;
+  fontWeight?: string | number;
+  fontStyle?: 'normal' | 'italic';
   textDecoration?: string;
   textAlign?: 'left' | 'center' | 'right' | 'justify';
   lineHeight?: number;
@@ -14,20 +14,27 @@ export interface ResumeStyle {
   padding?: number;
   margin?: number;
   borderRadius?: number;
+  opacity?: number;
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
 }
 
-export interface ResumeElement {
+export interface CanvasElement {
   id: string;
   type: ElementType;
-  content: any;
-  style: ResumeStyle;
-  isVisible: boolean;
+  content: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  style: ElementStyle;
+  rotation?: number;
+  isVisible?: boolean;
 }
 
 export interface ResumeState {
-  elements: ResumeElement[];
-  selectedElementId: string | null;
-  history: ResumeElement[][];
+  elements: CanvasElement[];
+  selectedElementIds: string[];
+  history: CanvasElement[][];
   historyIndex: number;
   layoutSettings: {
     zoom: number;

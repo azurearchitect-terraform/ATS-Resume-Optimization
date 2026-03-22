@@ -1,66 +1,150 @@
 {
   "personal_info": {
-    "name": "Harnish Hacker",
-    "title": "Senior Full Stack Engineer & Cloud Architect",
-    "email": "hackerharnish@gmail.com",
-    "phone": "+91 98765 43210",
-    "location": "Mumbai, India",
-    "website": "harnish.dev",
-    "summary": "Innovative Full Stack Engineer with 16+ years of experience in architecting and implementing high-performance web applications. Expert in React, Node.js, and Cloud Infrastructure (AWS/Azure). Proven track record of leading cross-functional teams and delivering complex projects on time."
+    "name": "Harnish Jariwala",
+    "location": "Surat, Gujarat, India",
+    "current_work_location": "Hyderabad, Telangana",
+    "email": "param_jariwala@yahoo.com",
+    "phone": "+91-8980161289",
+    "linkedin": "https://linkedin.com/in/harnishjariwala"
   },
+  "professional_summary_base": "Senior Cloud Infrastructure professional with 16 years of overall IT experience including 6+ years specializing in Microsoft Azure. Strong expertise in Azure architecture, hybrid cloud, high availability, disaster recovery, governance, monitoring, and cost optimization. Experienced designing and stabilizing enterprise-scale and regulated Azure environments across healthcare and SaaS domains.",
+  "core_competencies": [
+    "Azure Infrastructure Architecture",
+    "Azure Landing Zones",
+    "High Availability & Disaster Recovery (HA/DR)",
+    "Azure Networking & Hybrid Connectivity",
+    "Identity & Access Management (Entra ID, RBAC)",
+    "Azure Governance & Policy",
+    "Azure Backup & Site Recovery",
+    "Monitoring & Observability",
+    "Cost Optimization & FinOps",
+    "Hybrid Cloud Migrations",
+    "Incident Management & Operational Resiliency",
+    "Windows Server & Enterprise Infrastructure",
+    "PowerShell & Azure Automation",
+    "Infrastructure-as-Code (Terraform - Working Exposure)"
+  ],
   "experience": [
     {
-      "role": "Lead Software Architect",
-      "company": "Tech Solutions Inc.",
-      "duration": "2018 - Present",
+      "company": "Concentrix",
+      "location": "Hyderabad",
+      "role": "Cloud & Collaboration Engineer II (Microsoft Engagement)",
+      "duration": "Sep 2025 - Present",
       "bullets": [
-        "Architected and led the development of a microservices-based e-commerce platform handling 1M+ daily active users.",
-        "Implemented a real-time data processing pipeline using Kafka and Spark, reducing latency by 40%.",
-        "Mentored a team of 15+ engineers and established best practices for CI/CD and automated testing.",
-        "Optimized cloud infrastructure costs by 30% through strategic use of serverless and containerization."
+        "Support Microsoft-aligned enterprise customers with Azure cloud reliability, resiliency, and disaster recovery initiatives.",
+        "Conduct Azure HA/DR and resiliency assessments across compute, networking, identity, monitoring, and recovery layers.",
+        "Design and validate High Availability and Disaster Recovery architectures using Azure Availability Zones, Azure Backup, and Azure Site Recovery.",
+        "Review Azure Landing Zone configurations for governance and operational readiness.",
+        "Assess and improve Major Incident Response Plans aligned with SLA and recovery objectives.",
+        "Evaluate business continuity and failover readiness across infrastructure components.",
+        "Translate technical findings into actionable recommendations for engineering teams and leadership."
       ]
     },
     {
-      "role": "Senior Full Stack Developer",
-      "company": "Global Systems Ltd.",
-      "duration": "2012 - 2018",
+      "company": "M&M Software Development Centre India",
+      "location": "Vadodara",
+      "role": "Senior Ops Service Engineer - Cloud (Azure)",
+      "duration": "Jan 2025 - Jul 2025",
       "bullets": [
-        "Developed and maintained multiple enterprise-level web applications using React and Ruby on Rails.",
-        "Integrated third-party APIs for payment processing and CRM, improving business efficiency by 25%.",
-        "Led the migration of legacy monolithic applications to a modern React-based frontend.",
-        "Collaborated with UX designers to create intuitive and responsive user interfaces."
+        "Led Azure cloud infrastructure operations across development, staging, and production environments.",
+        "Managed and mentored a 5-member cloud engineering team.",
+        "Implemented Azure Monitor and Grafana observability reducing MTTR by 40%.",
+        "Defined incident response and change management processes.",
+        "Drove Azure cost governance through tagging, budgets, and optimization initiatives."
       ]
     },
     {
-      "role": "Software Engineer",
-      "company": "StartUp Hub",
-      "duration": "2008 - 2012",
+      "company": "ARCHER Transnational Systems Pvt. Ltd.",
+      "location": "Vadodara",
+      "role": "Senior System Administrator (Azure)",
+      "duration": "Sep 2024 - Dec 2024",
       "bullets": [
-        "Built the core product from scratch using PHP and MySQL, scaling to 100k users in the first year.",
-        "Implemented automated deployment scripts using Bash and Jenkins.",
-        "Optimized database queries, resulting in a 50% improvement in page load times.",
-        "Contributed to open-source libraries used within the company."
+        "Designed and supported secure Azure infrastructure environments for enterprise workloads.",
+        "Implemented Azure virtual networks, subnet segmentation, NSGs, and routing configurations.",
+        "Managed Azure VM provisioning, lifecycle management, and performance optimization.",
+        "Designed Azure Backup policies and conducted recovery testing.",
+        "Collaborated with security teams on firewall policies and access control configurations."
+      ]
+    },
+    {
+      "company": "HCLTech",
+      "location": "Hyderabad",
+      "role": "Senior Specialist - Azure Infrastructure",
+      "duration": "Apr 2024 - Jun 2024",
+      "bullets": [
+        "Delivered Azure infrastructure support, monitoring, and performance tuning for enterprise environments.",
+        "Supported hybrid migration planning and subscription optimization initiatives.",
+        "Led onboarding and enablement sessions for new cloud engineers."
+      ]
+    },
+    {
+      "company": "Casepoint LLC",
+      "location": "Surat",
+      "role": "Cloud Engineer - Azure",
+      "duration": "Mar 2022 - Apr 2024",
+      "bullets": [
+        "Led hybrid Azure migrations across compute, storage, and networking.",
+        "Designed enterprise Azure Landing Zones with governance and subscription structure.",
+        "Implemented Azure Policy, Security Center, RBAC, and MFA.",
+        "Designed disaster recovery architecture using Azure Site Recovery.",
+        "Delivered ~20% Azure cost savings through governance and optimization."
+      ]
+    },
+    {
+      "company": "Sterling Accuris Diagnostics",
+      "location": "Ahmedabad",
+      "role": "Senior Executive - IT",
+      "duration": "Jun 2017 - Feb 2022",
+      "bullets": [
+        "Designed healthcare-compliant Azure environments.",
+        "Implemented disaster recovery and backup automation.",
+        "Reduced on-prem downtime by 50% through phased hybrid migration."
+      ]
+    },
+    {
+      "company": "AGILUS Diagnostics",
+      "location": "Mumbai",
+      "role": "Office IT cum Logistics",
+      "duration": "Jul 2013 - May 2017",
+      "bullets": [
+        "Managed enterprise IT infrastructure operations.",
+        "Implemented disaster recovery planning and backup strategies.",
+        "Administered Active Directory, DNS, DHCP, and Windows Server environments."
+      ]
+    },
+    {
+      "company": "Galaxy Office Automation Pvt. Ltd.",
+      "location": "Mumbai",
+      "role": "Customer Support Engineer",
+      "duration": "Aug 2012 - Jul 2013",
+      "bullets": [
+        "Managed server deployments and enterprise IT support.",
+        "Implemented patch management and endpoint security."
+      ]
+    },
+    {
+      "company": "Aegis Global",
+      "location": "Surat",
+      "role": "Field Support Engineer",
+      "duration": "May 2010 - May 2012",
+      "bullets": [
+        "Delivered onsite and remote technical support.",
+        "Handled system deployment and troubleshooting."
       ]
     }
   ],
-  "education": [
-    {
-      "school": "Indian Institute of Technology (IIT)",
-      "degree": "Bachelor of Technology in Computer Science",
-      "period": "2004 - 2008"
-    }
+  "certifications": [
+    "Microsoft Certified: Azure Solutions Architect Expert (AZ-305)",
+    "Microsoft Certified: Azure Administrator Associate (AZ-104)",
+    "Microsoft Certified: Azure Fundamentals (AZ-900)"
   ],
-  "skills": [
-    "React", "TypeScript", "Node.js", "Python", "AWS", "Azure", "Docker", "Kubernetes", "GraphQL", "PostgreSQL", "Redis", "Kafka"
-  ],
-  "projects": [
-    {
-      "title": "AI-Powered Resume Builder",
-      "description": "A sophisticated web application that uses Gemini AI to optimize resumes for ATS compatibility."
-    },
-    {
-      "title": "Cloud Monitoring Dashboard",
-      "description": "Real-time monitoring tool for multi-cloud environments with automated alerting."
-    }
+  "education": {
+    "degree": "Bachelor of Computer Applications (BCA)",
+    "institution": "Chandigarh University",
+    "expected_completion": "2027"
+  },
+  "strategic_initiatives": [
+    "Enterprise Azure Migration & Modernization (2022-2024)",
+    "Cost Optimization & Infrastructure Maturity Programs (2019-2022)"
   ]
 }

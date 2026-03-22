@@ -1,6 +1,6 @@
 import React from 'react';
 import { useResumeStore } from '../store/useResumeStore';
-import { X, Check, ArrowRight } from 'lucide-react';
+import { X, Check, ArrowRight, Target, Sparkles, TrendingUp, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
@@ -11,6 +11,7 @@ export const ComparisonModal = () => {
 
   const handleAccept = () => {
     applyOptimization(comparisonData.optimized);
+    setComparisonData(null);
   };
 
   const handleReject = () => {
@@ -39,64 +40,131 @@ export const ComparisonModal = () => {
             </button>
           </div>
 
-          <div className="flex-1 overflow-hidden flex">
-            {/* Original */}
-            <div className={cn("flex-1 border-r flex flex-col", darkMode ? "border-gray-700" : "border-gray-100")}>
-              <div className={cn("p-4 font-bold text-xs uppercase tracking-widest", darkMode ? "bg-gray-900 text-gray-500 border-b border-gray-700" : "bg-gray-50 text-gray-500 border-b border-gray-100")}>
-                Original Content
-              </div>
-              <div className={cn("flex-1 overflow-y-auto p-8 space-y-6", darkMode ? "bg-gray-800" : "bg-white")}>
-                {comparisonData.original.map((el) => (
-                  <div key={el.id} className={cn("p-4 border rounded-xl opacity-60", darkMode ? "border-gray-700" : "border-gray-100")}>
-                    <h4 className={cn("text-[10px] font-bold uppercase mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>{el.type}</h4>
-                    <div className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
-                      {el.type === 'text' && el.content.text}
-                      {el.type === 'experience' && el.content.items?.map((item: any, i: number) => (
-                        <div key={i} className="mb-2">
-                          <div className={cn("font-bold", darkMode ? "text-gray-300" : "text-gray-800")}>{item.role} @ {item.company}</div>
-                          <div className="text-xs">{item.description}</div>
-                        </div>
-                      ))}
-                      {el.type === 'skills' && el.content.items?.join(', ')}
-                      {el.type === 'projects' && el.content.items?.map((item: any, i: number) => (
-                        <div key={i} className="mb-2">
-                          <div className={cn("font-bold", darkMode ? "text-gray-300" : "text-gray-800")}>{item.title}</div>
-                          <div className="text-xs">{item.description}</div>
-                        </div>
-                      ))}
-                    </div>
+          <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
+            {/* Stats & Notes Sidebar */}
+            <div className={cn("w-full md:w-80 border-r flex flex-col overflow-y-auto", darkMode ? "bg-gray-900 border-gray-700" : "bg-gray-50 border-gray-100")}>
+              <div className="p-6 space-y-8">
+                {/* Scores */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className={cn("p-4 rounded-2xl text-center border", darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200")}>
+                    <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Baseline</div>
+                    <div className="text-2xl font-black text-gray-400">{comparisonData.scores?.baseline || 0}%</div>
                   </div>
-                ))}
+                  <div className={cn("p-4 rounded-2xl text-center border", darkMode ? "bg-indigo-900/20 border-indigo-500/30" : "bg-indigo-50 border-indigo-100")}>
+                    <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-1">Optimized</div>
+                    <div className="text-2xl font-black text-indigo-600">{comparisonData.scores?.optimized || 0}%</div>
+                  </div>
+                </div>
+
+                {/* Scores Table */}
+                <div>
+                  <h3 className={cn("text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-500")}>
+                    <TrendingUp size={14} className="text-indigo-500" />
+                    Score Comparison
+                  </h3>
+                  <div className={cn("rounded-2xl border overflow-hidden", darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200")}>
+                    <table className="w-full text-[10px]">
+                      <thead>
+                        <tr className={cn("border-b", darkMode ? "bg-gray-950/50 border-gray-700" : "bg-gray-50 border-gray-100")}>
+                          <th className="px-3 py-2 text-left font-bold text-gray-500">Metric</th>
+                          <th className="px-2 py-2 text-center font-bold text-gray-500">Base</th>
+                          <th className="px-2 py-2 text-center font-bold text-indigo-500">Opt</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {(comparisonData.scores?.criteria || []).map((c: any, i: number) => (
+                          <tr key={i}>
+                            <td className="px-3 py-2 font-medium text-gray-400">{c.name}</td>
+                            <td className="px-2 py-2 text-center text-gray-400">{c.baseline}%</td>
+                            <td className="px-2 py-2 text-center font-bold text-indigo-500">{c.optimized}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Audience Table */}
+                <div>
+                  <h3 className={cn("text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-500")}>
+                    <Users size={14} className="text-indigo-500" />
+                    Audience Alignment
+                  </h3>
+                  <div className={cn("rounded-2xl border overflow-hidden", darkMode ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200")}>
+                    <table className="w-full text-[10px]">
+                      <thead>
+                        <tr className={cn("border-b", darkMode ? "bg-gray-950/50 border-gray-700" : "bg-gray-50 border-gray-100")}>
+                          <th className="px-3 py-2 text-left font-bold text-gray-500">Criterion</th>
+                          <th className="px-2 py-2 text-center font-bold text-gray-500">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {(comparisonData.audienceAlignment || []).map((a: any, i: number) => (
+                          <tr key={i}>
+                            <td className="px-3 py-2 font-medium text-gray-400">{a.criterion}</td>
+                            <td className="px-2 py-2 text-center">
+                              {a.status === 'met' ? <Check size={12} className="text-emerald-500 mx-auto" /> : 
+                               a.status === 'partially_met' ? <div className="w-2 h-2 rounded-full bg-amber-500 mx-auto" /> :
+                               <X size={12} className="text-rose-500 mx-auto" />}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Improvement Notes */}
+                <div>
+                  <h3 className={cn("text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-500")}>
+                    <Sparkles size={14} className="text-indigo-500" />
+                    Key Improvements
+                  </h3>
+                  <ul className="space-y-2">
+                    {(comparisonData.improvementNotes || []).map((note: string, i: number) => (
+                      <li key={i} className="flex gap-2 text-[11px] leading-relaxed">
+                        <Check size={12} className="text-emerald-500 shrink-0 mt-0.5" />
+                        <span className={darkMode ? "text-gray-300" : "text-gray-700"}>{note}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </div>
 
-            {/* Optimized */}
-            <div className="flex-1 flex flex-col">
-              <div className={cn("p-4 font-bold text-xs uppercase tracking-widest", darkMode ? "bg-indigo-900/30 text-indigo-400 border-b border-indigo-900/50" : "bg-indigo-50 text-indigo-600 border-b border-indigo-100")}>
-                Optimized Content
-              </div>
-              <div className={cn("flex-1 overflow-y-auto p-8 space-y-6", darkMode ? "bg-gray-800" : "bg-white")}>
-                {comparisonData.optimized.map((el) => (
-                  <div key={el.id} className={cn("p-4 border rounded-xl", darkMode ? "border-indigo-500/30 bg-indigo-500/5" : "border-indigo-100 bg-indigo-50/30")}>
-                    <h4 className={cn("text-[10px] font-bold uppercase mb-2", darkMode ? "text-indigo-500" : "text-indigo-400")}>{el.type}</h4>
-                    <div className={cn("text-sm", darkMode ? "text-gray-200" : "text-gray-800")}>
-                      {el.type === 'text' && el.content.text}
-                      {el.type === 'experience' && el.content.items?.map((item: any, i: number) => (
-                        <div key={i} className="mb-2">
-                          <div className={cn("font-bold", darkMode ? "text-indigo-400" : "text-indigo-700")}>{item.role} @ {item.company}</div>
-                          <div className="text-xs">{item.description}</div>
-                        </div>
-                      ))}
-                      {el.type === 'skills' && el.content.items?.join(', ')}
-                      {el.type === 'projects' && el.content.items?.map((item: any, i: number) => (
-                        <div key={i} className="mb-2">
-                          <div className={cn("font-bold", darkMode ? "text-indigo-400" : "text-indigo-700")}>{item.title}</div>
-                          <div className="text-xs">{item.description}</div>
-                        </div>
-                      ))}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Original */}
+              <div className={cn("flex-1 border-r flex flex-col", darkMode ? "border-gray-700" : "border-gray-100")}>
+                <div className={cn("p-4 font-bold text-xs uppercase tracking-widest", darkMode ? "bg-gray-900 text-gray-500 border-b border-gray-700" : "bg-gray-50 text-gray-500 border-b border-gray-100")}>
+                  Original Content
+                </div>
+                <div className={cn("flex-1 overflow-y-auto p-8 space-y-6", darkMode ? "bg-gray-800" : "bg-white")}>
+                  {comparisonData.original.map((el: any) => (
+                    <div key={el.id} className={cn("p-4 border rounded-xl opacity-60", darkMode ? "border-gray-700" : "border-gray-100")}>
+                      <h4 className={cn("text-[10px] font-bold uppercase mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>{el.type}</h4>
+                      <div className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                        {el.content}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+              </div>
+
+              {/* Optimized */}
+              <div className="flex-1 flex flex-col">
+                <div className={cn("p-4 font-bold text-xs uppercase tracking-widest", darkMode ? "bg-indigo-900/30 text-indigo-400 border-b border-indigo-900/50" : "bg-indigo-50 text-indigo-600 border-b border-indigo-100")}>
+                  Optimized Content
+                </div>
+                <div className={cn("flex-1 overflow-y-auto p-8 space-y-6", darkMode ? "bg-gray-800" : "bg-white")}>
+                  {comparisonData.optimized.map((el: any) => (
+                    <div key={el.id} className={cn("p-4 border rounded-xl", darkMode ? "border-indigo-500/30 bg-indigo-500/5" : "border-indigo-100 bg-indigo-50/30")}>
+                      <h4 className={cn("text-[10px] font-bold uppercase mb-2", darkMode ? "text-indigo-500" : "text-indigo-400")}>{el.type}</h4>
+                      <div className={cn("text-sm", darkMode ? "text-gray-200" : "text-gray-800")}>
+                        {el.content}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

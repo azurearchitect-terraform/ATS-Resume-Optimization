@@ -22,7 +22,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { useResumeStore } from '../../store/useResumeStore';
-import { ElementType, ResumeElement } from '../../types/resume';
+import { ElementType, CanvasElement } from '../../types/resume';
 import { cn } from '../../lib/utils';
 import { 
   DndContext, 
@@ -59,7 +59,7 @@ const SortableItem = ({ id, element }: SortableItemProps) => {
     isDragging,
   } = useSortable({ id });
 
-  const { toggleVisibility, removeElement, selectElement, selectedElementId, darkMode } = useResumeStore();
+  const { toggleVisibility, removeElement, selectElement, selectedElementIds, darkMode } = useResumeStore();
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -67,13 +67,15 @@ const SortableItem = ({ id, element }: SortableItemProps) => {
     zIndex: isDragging ? 2 : 1,
   };
 
+  const isSelected = selectedElementIds.includes(id);
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={cn(
         "group flex items-center gap-2 p-2 rounded-lg border transition-all mb-2 cursor-pointer",
-        selectedElementId === id 
+        isSelected 
           ? (darkMode ? "border-indigo-500 bg-indigo-500/10" : "border-indigo-500 bg-indigo-50") 
           : (darkMode ? "border-transparent hover:bg-gray-700" : "border-transparent hover:bg-gray-50"),
         !element.isVisible && "opacity-50"
@@ -85,7 +87,7 @@ const SortableItem = ({ id, element }: SortableItemProps) => {
       </div>
       
       <span className={cn("flex-1 text-sm font-medium capitalize truncate", darkMode ? "text-gray-200" : "text-gray-700")}>
-        {element.type} - {element.content.title || 'Untitled'}
+        {element.type} - {element.content.substring(0, 20)}...
       </span>
 
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -119,10 +121,17 @@ export const Sidebar = () => {
     setIsOptimizing,
     updateElement,
     aiEngine,
+    audience,
     setComparisonData,
     darkMode
   } = useResumeStore();
   const [activeTab, setActiveTab] = useState<'tools' | 'config'>('tools');
+
+  const audiences = [
+    { id: 'Enterprise', name: 'Enterprise/Big Tech', desc: 'Focus on scale, leadership, and architecture.' },
+    { id: 'Startup', name: 'Startup/Agile', desc: 'Focus on speed, versatility, and ownership.' },
+    { id: 'Technical', name: 'Technical/Internal', desc: 'Deep dive into implementation and tooling.' },
+  ];
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -136,7 +145,7 @@ export const Sidebar = () => {
     if (active.id !== over.id) {
       const oldIndex = elements.findIndex((el) => el.id === active.id);
       const newIndex = elements.findIndex((el) => el.id === over.id);
-      reorderElements(arrayMove(elements, oldIndex, newIndex));
+      reorderElements(oldIndex, newIndex);
     }
   };
 
@@ -151,38 +160,49 @@ export const Sidebar = () => {
     const originalElements = JSON.parse(JSON.stringify(elements));
 
     try {
-      const result = await optimizeFullResume(masterResume, jobDescription, targetRole, aiEngine);
+      const result = await optimizeFullResume(masterResume, jobDescription, targetRole, aiEngine, audience);
       
-      const optimizedElements: ResumeElement[] = elements.map(el => {
-        switch (el.type) {
-          case 'header':
-            return {
-              ...el,
-              content: {
-                ...el.content,
-                name: masterResume.personal_info.name,
-                title: targetRole || masterResume.personal_info.title,
-              }
-            };
-          case 'text':
-            if (el.content.title === 'Professional Summary') {
-              return { ...el, content: { ...el.content, text: result.summary } };
-            }
-            return el;
-          case 'experience':
-            return { ...el, content: { ...el.content, items: result.experience } };
-          case 'skills':
-            return { ...el, content: { ...el.content, items: result.skills } };
-          case 'projects':
-            return { ...el, content: { ...el.content, items: result.projects } };
-          default:
-            return el;
+      const optimizedElements: CanvasElement[] = elements.map(el => {
+        if (el.id === 'summary-text') {
+          return { ...el, content: result.summary };
         }
+        if (el.id === 'skills-text') {
+          const skillsText = Array.isArray(result.skills) 
+            ? result.skills.join(', ') 
+            : Object.values(result.skills).flat().join(', ');
+          return { ...el, content: skillsText };
+        }
+        
+        // Map experience bullets
+        if (el.id.startsWith('exp-bullets-')) {
+          const index = parseInt(el.id.split('-').pop() || '0');
+          if (result.experience[index]) {
+            return { ...el, content: result.experience[index].bullets.map((b: string) => `• ${b}`).join('\n') };
+          }
+        }
+
+        // Map experience headers
+        if (el.id.startsWith('exp-header-')) {
+          const index = parseInt(el.id.split('-').pop() || '0');
+          if (result.experience[index]) {
+            return { ...el, content: `${result.experience[index].role} | ${result.experience[index].company}` };
+          }
+        }
+
+        return el;
       });
 
       setComparisonData({
         original: originalElements,
         optimized: optimizedElements,
+        scores: {
+          baseline: result.baseline_score,
+          optimized: result.match_score,
+          criteria: []
+        },
+        audienceAlignment: result.audience_alignment_notes,
+        improvementNotes: result.improvement_notes,
+        audienceNotes: result.audience_alignment_notes,
         isVisible: true
       });
     } catch (error) {
@@ -276,25 +296,6 @@ export const Sidebar = () => {
               </div>
             </div>
 
-            {/* AI Assistant */}
-            <div className="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles size={18} />
-                <span className="font-bold text-sm">AI Assistant</span>
-              </div>
-              <p className="text-[11px] text-indigo-100 mb-3 leading-relaxed">
-                Let AI rewrite your entire resume based on your target job description.
-              </p>
-              <button 
-                onClick={handleOptimizeResume}
-                disabled={isOptimizing}
-                className="w-full py-2.5 bg-white text-indigo-600 rounded-xl text-xs font-bold hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
-              >
-                {isOptimizing ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                {isOptimizing ? 'Optimizing...' : 'Optimize Resume'}
-              </button>
-            </div>
-
             {/* Layers / Section List */}
             <div>
               <h3 className={cn("text-xs font-semibold uppercase tracking-wider mb-3", darkMode ? "text-gray-500" : "text-gray-400")}>Sections</h3>
@@ -351,6 +352,33 @@ export const Sidebar = () => {
 
             <div>
               <label className={cn("text-xs font-bold uppercase mb-3 flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-500")}>
+                <Target size={14} className="text-indigo-500" />
+                Target Audience
+              </label>
+              <div className="space-y-2">
+                {audiences.map((aud) => (
+                  <button
+                    key={aud.id}
+                    onClick={() => updateConfig({ audience: aud.id })}
+                    className={cn(
+                      "w-full p-3 rounded-xl border transition-all flex items-center gap-3 text-left",
+                      audience === aud.id 
+                        ? (darkMode ? "border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500" : "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500") 
+                        : (darkMode ? "border-gray-700 hover:border-gray-600 bg-gray-900" : "border-gray-100 hover:border-gray-200 bg-white")
+                    )}
+                  >
+                    <div className="flex-1">
+                      <div className={cn("text-xs font-bold", darkMode ? "text-gray-200" : "text-gray-900")}>{aud.name}</div>
+                      <div className="text-[10px] text-gray-500">{aud.desc}</div>
+                    </div>
+                    {audience === aud.id && <CheckCircle2 size={16} className="text-indigo-600" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className={cn("text-xs font-bold uppercase mb-3 flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-500")}>
                 <Cpu size={14} className="text-indigo-500" />
                 AI Engine
               </label>
@@ -382,6 +410,25 @@ export const Sidebar = () => {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* AI Optimization Section */}
+            <div className={cn("p-5 rounded-2xl border transition-all mt-4", darkMode ? "bg-indigo-900/20 border-indigo-500/30" : "bg-indigo-600 border-indigo-500")}>
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={16} className="text-white" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Optimizer</h3>
+              </div>
+              <p className="text-[10px] text-indigo-100 mb-4 leading-relaxed">
+                Tailor your resume to the job description and target role using advanced AI.
+              </p>
+              <button 
+                onClick={handleOptimizeResume}
+                disabled={isOptimizing}
+                className="w-full py-3 bg-white text-indigo-600 rounded-xl text-xs font-bold hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-md"
+              >
+                {isOptimizing ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {isOptimizing ? 'Optimizing Resume...' : 'Optimize Resume'}
+              </button>
             </div>
           </div>
         )}
