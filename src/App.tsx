@@ -193,8 +193,14 @@ export default function App() {
       let firstAudienceId: string | null = null;
       
       // Process audiences one by one
-      for (const audienceId of selectedAudiences) {
+      for (let i = 0; i < selectedAudiences.length; i++) {
+        const audienceId = selectedAudiences[i];
         if (controller.signal.aborted) break;
+        
+        // Add a small delay between requests to avoid hitting RPM limits (especially for free tier)
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
         
         try {
           const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
@@ -213,9 +219,9 @@ export default function App() {
           }
         } catch (innerErr: any) {
           console.error(`Error optimizing for ${audienceId}:`, innerErr);
-          const isRateLimit = innerErr?.message?.includes("429") || innerErr?.message?.includes("RESOURCE_EXHAUSTED");
+          const isRateLimit = innerErr?.message?.includes("429") || innerErr?.message?.includes("RESOURCE_EXHAUSTED") || innerErr?.message?.includes("quota");
           if (isRateLimit) {
-            setError(`Rate limit exceeded for ${audienceId}. Please wait a moment and try again.`);
+            setError(`Rate limit or quota exceeded for ${audienceId}. Please try again in a few minutes or switch to a different AI engine in the settings.`);
           } else {
             setError(`Failed to optimize for ${audienceId}. ${innerErr.message || ''}`);
           }
@@ -334,29 +340,43 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
         compress: true
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const pdfWidth = 210; // A4 width in mm
+      const pdfHeight = 297; // A4 height in mm
 
       const captureOptions = {
-        scale: 2,
+        scale: 3, // High quality
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
-        windowWidth: 794, // A4 width in px at 96dpi
-        windowHeight: 1123 // A4 height in px at 96dpi
+        width: 794, // Force exact A4 width in px at 96dpi
+        height: 1123, // Force exact A4 height in px at 96dpi
+        onclone: (clonedDoc: Document) => {
+          const page1Clone = clonedDoc.getElementById('resume-page-1');
+          const page2Clone = clonedDoc.getElementById('resume-page-2');
+          if (page1Clone) {
+            page1Clone.style.width = '794px';
+            page1Clone.style.height = '1123px';
+            page1Clone.style.transform = 'none';
+          }
+          if (page2Clone) {
+            page2Clone.style.width = '794px';
+            page2Clone.style.height = '1123px';
+            page2Clone.style.transform = 'none';
+          }
+        }
       };
 
       // Capture Page 1
       const canvas1 = await html2canvas(page1, captureOptions);
-      const imgData1 = canvas1.toDataURL('image/jpeg', 0.95);
-      pdf.addImage(imgData1, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      const imgData1 = canvas1.toDataURL('image/jpeg', 1.0);
+      pdf.addImage(imgData1, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
 
       // Capture Page 2
       if (page2) {
         pdf.addPage();
         const canvas2 = await html2canvas(page2, captureOptions);
-        const imgData2 = canvas2.toDataURL('image/jpeg', 0.95);
-        pdf.addImage(imgData2, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        const imgData2 = canvas2.toDataURL('image/jpeg', 1.0);
+        pdf.addImage(imgData2, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       }
       
       const fileName = `Professional_Resume_${(targetRole || "Expert").replace(/\s+/g, '_')}.pdf`;
@@ -983,15 +1003,21 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             color: getSectionStyle('header').color,
                           }}
                         >
-                          <h1 className="font-bold uppercase tracking-[0.15em] mb-2" style={{ fontSize: '22px' }}>
+                          <h1 className="font-bold uppercase tracking-[0.15em] mb-2" style={{ fontSize: '24px' }}>
                             {masterResume.personal_info.name}
                           </h1>
-                          <div className="font-medium opacity-80 border-t border-black/10 pt-2 flex justify-center gap-4" style={{ fontSize: '11px' }}>
+                          <div className="font-medium opacity-80 border-t border-black/10 pt-2 flex justify-center gap-4 flex-wrap" style={{ fontSize: '12px' }}>
                             <span>{masterResume.personal_info.location}</span>
                             <span>&bull;</span>
                             <span>{masterResume.personal_info.email}</span>
                             <span>&bull;</span>
                             <span>{masterResume.personal_info.phone}</span>
+                            {masterResume.personal_info.linkedin && (
+                              <>
+                                <span>&bull;</span>
+                                <span>LinkedIn: {masterResume.personal_info.linkedin.replace('https://', '')}</span>
+                              </>
+                            )}
                           </div>
                         </div>
                         
@@ -1006,10 +1032,10 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             color: getSectionStyle('summary').color,
                           }}
                         >
-                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                             Professional Summary
                           </h2>
-                          <p className="opacity-90" style={{ fontSize: '10px' }}>{results[activeAudience]?.summary || masterResume.professional_summary_base}</p>
+                          <p className="opacity-90" style={{ fontSize: '11px' }}>{results[activeAudience]?.summary || masterResume.professional_summary_base}</p>
                         </div>
 
                         {/* Skills */}
@@ -1022,14 +1048,14 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             color: getSectionStyle('skills').color,
                           }}
                         >
-                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                             Core Competencies
                           </h2>
                           {results[activeAudience]?.skills && !Array.isArray(results[activeAudience].skills) ? (
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-2" style={{ fontSize: '10px' }}>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2" style={{ fontSize: '11px' }}>
                               {Object.entries(results[activeAudience].skills).map(([category, items]) => (
                                 <div key={category}>
-                                  <div className="font-bold uppercase text-[9px] opacity-60 mb-0.5">{category}</div>
+                                  <div className="font-bold uppercase text-[10px] opacity-60 mb-0.5">{category}</div>
                                   <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
                                     {(items as string[]).map((s, i) => (
                                       <span key={i} className="opacity-90">{s}{i < (items as string[]).length - 1 ? ',' : ''}</span>
@@ -1039,7 +1065,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                               ))}
                             </div>
                           ) : (
-                            <div className="grid grid-cols-2 gap-x-8 gap-y-0.5" style={{ fontSize: '10px' }}>
+                            <div className="grid grid-cols-2 gap-x-8 gap-y-0.5" style={{ fontSize: '11px' }}>
                               {(Array.isArray(results[activeAudience]?.skills) ? results[activeAudience].skills as string[] : masterResume.core_competencies).map((s, i) => (
                                 <div key={i} className="resume-bullet-item">
                                   <div className="resume-bullet-dot" />
@@ -1060,7 +1086,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             color: getSectionStyle('experience').color,
                           }}
                         >
-                          <h2 className="font-semibold mb-3 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                          <h2 className="font-semibold mb-3 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                             Professional Experience
                           </h2>
                           {(() => {
@@ -1069,13 +1095,13 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             return allExp.slice(0, splitIndex).map((exp, i) => (
                               <div key={i} className="mb-4 last:mb-0">
                                 <div className="flex justify-between font-bold items-baseline mb-0.5">
-                                  <span style={{ fontSize: '11px' }}>{exp.role}</span>
-                                  <span className="opacity-70 font-normal italic" style={{ fontSize: '10px' }}>{exp.duration}</span>
+                                  <span style={{ fontSize: '12px' }}>{exp.role}</span>
+                                  <span className="opacity-70 font-normal italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
                                 </div>
-                                <div className="font-medium mb-1 text-emerald-700" style={{ fontSize: '10px' }}>{exp.company}</div>
+                                <div className="font-medium mb-1 text-emerald-700" style={{ fontSize: '11px' }}>{exp.company}</div>
                                 <div className="space-y-0.5">
                                   {exp.bullets.map((b, bi) => (
-                                    <div key={bi} className="resume-bullet-item" style={{ fontSize: '10px' }}>
+                                    <div key={bi} className="resume-bullet-item" style={{ fontSize: '11px' }}>
                                       <div className="resume-bullet-dot" />
                                       <span className="resume-bullet-text opacity-90">{b}</span>
                                     </div>
@@ -1108,13 +1134,13 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             return allExp.slice(splitIndex).map((exp, i) => (
                               <div key={i} className="mb-4 last:mb-0">
                                 <div className="flex justify-between font-bold items-baseline mb-0.5">
-                                  <span style={{ fontSize: '11px' }}>{exp.role}</span>
-                                  <span className="opacity-70 font-normal italic" style={{ fontSize: '10px' }}>{exp.duration}</span>
+                                  <span style={{ fontSize: '12px' }}>{exp.role}</span>
+                                  <span className="opacity-70 font-normal italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
                                 </div>
-                                <div className="font-medium mb-1 text-emerald-700" style={{ fontSize: '10px' }}>{exp.company}</div>
+                                <div className="font-medium mb-1 text-emerald-700" style={{ fontSize: '11px' }}>{exp.company}</div>
                                 <div className="space-y-0.5">
                                   {exp.bullets.map((b, bi) => (
-                                    <div key={bi} className="resume-bullet-item" style={{ fontSize: '10px' }}>
+                                    <div key={bi} className="resume-bullet-item" style={{ fontSize: '11px' }}>
                                       <div className="resume-bullet-dot" />
                                       <span className="resume-bullet-text opacity-90">{b}</span>
                                     </div>
@@ -1127,12 +1153,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           {/* Early Career */}
                           {results[activeAudience]?.early_career && results[activeAudience].early_career.length > 0 && (
                             <div className="mt-4">
-                              <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                              <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                                 Selected Early Career
                               </h2>
                               <div className="space-y-0.5">
                                 {results[activeAudience].early_career.map((b, i) => (
-                                  <div key={i} className="resume-bullet-item" style={{ fontSize: '10px' }}>
+                                  <div key={i} className="resume-bullet-item" style={{ fontSize: '11px' }}>
                                     <div className="resume-bullet-dot" />
                                     <span className="resume-bullet-text opacity-90">{b}</span>
                                   </div>
@@ -1152,10 +1178,10 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             color: getSectionStyle('certifications').color,
                           }}
                         >
-                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                             Professional Certifications
                           </h2>
-                          <div className="grid grid-cols-1 gap-0.5" style={{ fontSize: '10px' }}>
+                          <div className="grid grid-cols-1 gap-0.5" style={{ fontSize: '11px' }}>
                             {(results[activeAudience]?.certifications || masterResume.certifications).map((cert, i) => (
                               <div key={i} className="resume-bullet-item">
                                 <div className="resume-bullet-dot" />
@@ -1176,12 +1202,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                               color: getSectionStyle('projects').color,
                             }}
                           >
-                            <h2 className="font-semibold mb-3 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                            <h2 className="font-semibold mb-3 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                               Key Strategic Projects
                             </h2>
                             <div className="space-y-2">
                               {results[activeAudience].projects.map((proj, i) => (
-                                <div key={i} className="resume-bullet-item" style={{ fontSize: '10px' }}>
+                                <div key={i} className="resume-bullet-item" style={{ fontSize: '11px' }}>
                                   <div className="resume-bullet-dot" />
                                   <span className="resume-bullet-text opacity-90">
                                     {typeof proj === 'string' ? proj : (proj as any).title}
@@ -1202,12 +1228,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             color: getSectionStyle('education').color,
                           }}
                         >
-                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '13px' }}>
+                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                             Education
                           </h2>
                           {(results[activeAudience]?.education || [masterResume.education]).map((edu, i) => (
                             <div key={i} className="mb-2 last:mb-0">
-                              <div className="resume-bullet-item" style={{ fontSize: '10px' }}>
+                              <div className="resume-bullet-item" style={{ fontSize: '11px' }}>
                                 <div className="resume-bullet-dot" />
                                 <span className="resume-bullet-text opacity-90">
                                   {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}

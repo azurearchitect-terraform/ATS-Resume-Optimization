@@ -57,43 +57,46 @@
     background-color: #000000 !important;
   }
 
-  /* Professional Bullet Point Alignment - Flexbox is more robust for html2canvas */
+  /* Professional Bullet Point Alignment - Absolute positioning is more robust for html2canvas than flexbox */
   .resume-bullet-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
+    position: relative;
+    padding-left: 16px; /* Increased space for better visual separation */
     margin-bottom: 4px;
     width: 100%;
     text-align: left;
+    line-height: 1.5; /* Improved line height for readability */
   }
 
   .resume-bullet-dot {
-    margin-top: 6px;
-    min-width: 4px;
+    position: absolute;
+    left: 4px;
+    top: 6px; /* Adjusted for better horizontal alignment with text baseline */
     width: 4px;
     height: 4px;
     background-color: currentColor;
     border-radius: 50%;
-    flex-shrink: 0;
   }
 
   .resume-bullet-text {
-    flex: 1;
-    min-width: 0; /* Prevents flex item from overflowing */
+    display: block;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    font-size: inherit;
   }
 
   /* Page margins and typography system */
   .resume-page {
     width: 210mm;
     height: 297mm;
+    min-width: 210mm;
+    min-height: 297mm;
     background-color: white;
-    padding: 40px 40px 60px 40px; /* Top: 40px, Left/Right: 40px, Bottom: 60px */
+    padding: 15mm 15mm 20mm 15mm; /* Standard professional margins */
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
     position: relative;
     overflow: hidden;
+    color: #1A1A1A;
   }
 }

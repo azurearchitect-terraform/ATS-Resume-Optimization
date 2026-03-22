@@ -112,8 +112,9 @@ TARGET AUDIENCE: ${audience}
 6. Calculate approximate optimized match score (0–100).
 `;
 
-  const maxRetries = 3;
+  const maxRetries = 5;
   let retryCount = 0;
+  let currentModel = config.model;
 
   while (retryCount <= maxRetries) {
     try {
@@ -122,7 +123,7 @@ TARGET AUDIENCE: ${audience}
       if (config.engine === 'gemini') {
         const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
         const response = await ai.models.generateContent({
-          model: config.model,
+          model: currentModel,
           contents: prompt,
           config: {
             maxOutputTokens: 16384,
@@ -215,7 +216,14 @@ TARGET AUDIENCE: ${audience}
       
       if (isRateLimit && retryCount < maxRetries) {
         retryCount++;
-        const delay = Math.pow(2, retryCount) * 1000 + Math.random() * 1000;
+        
+        // Fallback to Flash if Pro fails with rate limit
+        if (config.engine === 'gemini' && currentModel.includes('pro')) {
+          console.warn(`Rate limit hit on Gemini Pro. Falling back to Gemini Flash for retry ${retryCount}...`);
+          currentModel = 'gemini-3-flash-preview';
+        }
+
+        const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
         console.warn(`Rate limit hit on ${config.engine}. Retrying in ${Math.round(delay)}ms... (Attempt ${retryCount}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
