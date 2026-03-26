@@ -11,17 +11,17 @@ export const RESUME_DATA = {
     "Proven experience designing, migrating, and stabilizing enterprise-scale and regulated Azure environments across healthcare, enterprise SaaS, and Microsoft-aligned engagements. Deep foundation in traditional infrastructure and operations, enabling practical, reliable, and support-ready cloud solutions. Comfortable operating across architecture, operations, and stakeholder layers."
   ],
   skills: [
-    "Microsoft Azure Infrastructure & Hybrid Cloud",
-    "Azure Architecture & Landing Zones",
-    "High Availability & Disaster Recovery (HA/DR)",
-    "Azure Networking & Connectivity",
-    "Identity, Security & Governance (Entra ID, RBAC, Policy)",
-    "Azure Backup, Site Recovery & Business Continuity",
-    "Monitoring, Incident Management & Operational Resiliency",
-    "Cost Optimization & Cloud Governance",
+    "Enterprise Azure Infrastructure Architecture (Hub-Spoke, vWAN)",
+    "Azure Landing Zones (CAF Aligned)",
+    "High Availability & Disaster Recovery (99.99% SLA, Multi-region)",
+    "Azure Networking & Hybrid Connectivity (ExpressRoute, VPN)",
+    "Identity, Security & Governance (Entra ID, PIM, RBAC, Policy)",
+    "Azure Backup, Site Recovery & Business Continuity (RPO/RTO Optimization)",
+    "Monitoring, Incident Management & Resiliency (40% MTTR Reduction)",
+    "Cost Optimization & FinOps (~20% Savings)",
     "Windows Server & Enterprise Infrastructure",
-    "PowerShell & Azure Automation",
-    "Infrastructure-as-Code (Terraform – working exposure)"
+    "PowerShell & Azure CLI Automation",
+    "Infrastructure-as-Code (Terraform, ARM Templates)"
   ],
   certifications: [
     "Microsoft Certified: Azure Solutions Architect Expert (AZ-305)",
@@ -159,7 +159,7 @@ export const RESUME_DATA = {
       expected_completion: "Expected Completion: 2027"
     }
   ],
-  initiatives: [
+  projects: [
     {
       title: "ENTERPRISE AZURE MIGRATION & MODERNIZATION (2022–2024)",
       period: "2022–2024",

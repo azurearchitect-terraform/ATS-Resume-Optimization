@@ -16,9 +16,8 @@ export interface OptimizationResult {
     duration: string;
     bullets: string[];
   }[];
-  early_career: string[];
   certifications: string[];
-  projects: string[];
+  projects: { title: string; description: string }[];
   education: string[];
   ats_keywords_from_jd: string[];
   ats_keywords_added_to_resume: string[];
@@ -65,11 +64,10 @@ Analyze and rewrite the resume for the candidate based on the provided input.
 Transform it into a high-impact, logically consistent, and ATS-optimized executive-level resume tailored for Azure Cloud roles.
 
 CRITICAL ISSUES TO RESOLVE:
-1. EXPERIENCE GAP RESOLUTION:
-* The candidate claims 16+ years of experience but recent roles start later.
-* Create a section: "Selected Early Career"
-* Summarize earlier experience in 2–3 concise bullet points.
-* Do NOT expand into full roles. Keep it compact.
+1. FULL CAREER HISTORY:
+* Include ALL roles from the input resume in the experience section.
+* Do NOT summarize older roles into a separate section.
+* Every role must have at least 3 high-impact bullet points.
 
 2. EDUCATION PARADOX:
 * The candidate is completing BCA in 2027 despite senior experience.
@@ -88,10 +86,9 @@ CRITICAL ISSUES TO RESOLVE:
 LAYOUT-SAFE CONTENT RULES (MANDATORY):
 - SUMMARY: Max 60 words, leadership-focused.
 - SKILLS: Max 12–15 items total across categories.
-- EXPERIENCE: Max 5 roles. Each role: Max 4 bullets, each bullet max 12 words. Focus on impact.
-- SELECTED EARLY CAREER: 2–3 bullets only.
+- EXPERIENCE: Include ALL roles from the input. For the first role, provide at least 7 bullets. For the second, at least 6. For the third and fourth, at least 5. For all other roles, provide at least 3 bullets. Each bullet max 12 words. Focus on impact.
 - CERTIFICATIONS: Max 4 items.
-- PROJECTS: Max 2 (optional, concise).
+- PROJECTS: Max 2 high-impact technical projects. Use the projects from the Master Resume as the source. For each project, generate a concise and impactful 1-2 sentence description if the input is brief or missing. Focus on quantifiable achievements (e.g., "Reduced latency by 40%") and technical details (e.g., "using Azure Kubernetes Service and Terraform") relevant to a Cloud & Collaboration Engineer role. Provide a title and the description.
 - EDUCATION: Properly reframed.
 
 INPUT:
@@ -135,12 +132,12 @@ TARGET AUDIENCE: ${audience}
                 skills: {
                   type: Type.OBJECT,
                   properties: {
-                    infrastructure: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    devsecops: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    governance: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    observability: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    Infrastructure: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    DevSecOps: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    Governance: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    Observability: { type: Type.ARRAY, items: { type: Type.STRING } }
                   },
-                  required: ["infrastructure", "devsecops", "governance", "observability"]
+                  required: ["Infrastructure", "DevSecOps", "Governance", "Observability"]
                 },
                 experience: {
                   type: Type.ARRAY,
@@ -155,9 +152,18 @@ TARGET AUDIENCE: ${audience}
                     required: ["role", "company", "bullets"]
                   }
                 },
-                early_career: { type: Type.ARRAY, items: { type: Type.STRING } },
                 certifications: { type: Type.ARRAY, items: { type: Type.STRING } },
-                projects: { type: Type.ARRAY, items: { type: Type.STRING } },
+                projects: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      description: { type: Type.STRING }
+                    },
+                    required: ["title", "description"]
+                  }
+                },
                 education: { type: Type.ARRAY, items: { type: Type.STRING } },
                 ats_keywords_from_jd: { type: Type.ARRAY, items: { type: Type.STRING } },
                 ats_keywords_added_to_resume: { type: Type.ARRAY, items: { type: Type.STRING } },
@@ -168,7 +174,7 @@ TARGET AUDIENCE: ${audience}
                 audience_alignment_notes: { type: Type.STRING }
               },
               required: [
-                "summary", "skills", "experience", "early_career", "certifications", "projects", "education",
+                "summary", "skills", "experience", "certifications", "projects", "education",
                 "ats_keywords_from_jd", "ats_keywords_added_to_resume", "keyword_gap", 
                 "match_score", "baseline_score", "improvement_notes", "audience_alignment_notes"
               ]
@@ -182,7 +188,7 @@ TARGET AUDIENCE: ${audience}
           model: config.model,
           messages: [
             { role: "system", content: "You are a professional resume optimization engine. Return ONLY valid JSON." },
-            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: string[], experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: { degree: string, institution: string, expected_completion: string }[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string }" }
+            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: { Infrastructure: string[], DevSecOps: string[], Governance: string[], Observability: string[] }, experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: { degree: string, institution: string, expected_completion: string }[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string }" }
           ],
           response_format: { type: "json_object" }
         });
@@ -193,7 +199,7 @@ TARGET AUDIENCE: ${audience}
           model: config.model,
           max_tokens: 8192,
           messages: [
-            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: string[], experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: { degree: string, institution: string, expected_completion: string }[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string }" }
+            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: { Infrastructure: string[], DevSecOps: string[], Governance: string[], Observability: string[] }, experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: { degree: string, institution: string, expected_completion: string }[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string }" }
           ]
         });
         // Anthropic might return text with markdown blocks

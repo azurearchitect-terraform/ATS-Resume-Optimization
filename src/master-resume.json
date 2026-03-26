@@ -5,25 +5,36 @@
     "current_work_location": "Hyderabad, Telangana",
     "email": "param_jariwala@yahoo.com",
     "phone": "+91-8980161289",
-    "linkedin": "https://linkedin.com/in/harnishjariwala"
+    "linkedin": "harnishjariwala"
   },
   "professional_summary_base": "Senior Cloud Infrastructure professional with 16 years of overall IT experience including 6+ years specializing in Microsoft Azure. Strong expertise in Azure architecture, hybrid cloud, high availability, disaster recovery, governance, monitoring, and cost optimization. Experienced designing and stabilizing enterprise-scale and regulated Azure environments across healthcare and SaaS domains.",
-  "core_competencies": [
-    "Azure Infrastructure Architecture",
-    "Azure Landing Zones",
-    "High Availability & Disaster Recovery (HA/DR)",
-    "Azure Networking & Hybrid Connectivity",
-    "Identity & Access Management (Entra ID, RBAC)",
-    "Azure Governance & Policy",
-    "Azure Backup & Site Recovery",
-    "Monitoring & Observability",
-    "Cost Optimization & FinOps",
-    "Hybrid Cloud Migrations",
-    "Incident Management & Operational Resiliency",
-    "Windows Server & Enterprise Infrastructure",
-    "PowerShell & Azure Automation",
-    "Infrastructure-as-Code (Terraform - Working Exposure)"
-  ],
+  "core_competencies": {
+    "Infrastructure": [
+      "Enterprise Azure Infrastructure Architecture (Hub-Spoke, vWAN)",
+      "Azure Landing Zones (CAF Aligned)",
+      "High Availability & Disaster Recovery (99.99% SLA, Multi-region)",
+      "Azure Networking & Hybrid Connectivity (ExpressRoute, VPN)",
+      "Azure Backup & Site Recovery (RPO/RTO Optimization)",
+      "Hybrid Cloud Migrations (Zero-Downtime)",
+      "Windows Server & Enterprise Infrastructure"
+    ],
+    "DevSecOps": [
+      "Identity & Access Management (Entra ID, PIM, Conditional Access)",
+      "Azure Governance & Policy (Blueprints, RBAC)",
+      "PowerShell & Azure CLI Automation",
+      "Infrastructure-as-Code (Terraform, ARM Templates)"
+    ],
+    "Governance": [
+      "Cost Optimization & FinOps (~20% Savings)",
+      "Azure Policy & Compliance (Healthcare/Regulated)",
+      "RBAC & Security Governance"
+    ],
+    "Observability": [
+      "Monitoring & Observability (Azure Monitor, Log Analytics)",
+      "Operational Resiliency & Incident Management (40% MTTR Reduction)",
+      "Grafana & Custom Dashboards"
+    ]
+  },
   "experience": [
     {
       "company": "Concentrix",
@@ -143,8 +154,14 @@
     "institution": "Chandigarh University",
     "expected_completion": "2027"
   },
-  "strategic_initiatives": [
-    "Enterprise Azure Migration & Modernization (2022-2024)",
-    "Cost Optimization & Infrastructure Maturity Programs (2019-2022)"
+  "projects": [
+    {
+      "title": "Enterprise Azure Migration & Modernization (2022-2024)",
+      "description": "Led phased hybrid cloud migrations across compute, networking, and identity services, designing Azure Landing Zones aligned with security and compliance standards."
+    },
+    {
+      "title": "Cost Optimization & Infrastructure Maturity Programs (2019-2022)",
+      "description": "Delivered cost governance and optimization initiatives through workload right-sizing and lifecycle management, improving operational resilience and monitoring."
+    }
   ]
 }

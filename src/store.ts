@@ -31,6 +31,7 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
     experience: [],
     skills: [],
     education: [],
+    projects: [],
   },
   template: TEMPLATES.azureArchitect as unknown as ResumeTemplate,
   pages: [],

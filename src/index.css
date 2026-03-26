@@ -70,7 +70,7 @@
   .resume-bullet-dot {
     position: absolute;
     left: 4px;
-    top: 6px; /* Adjusted for better horizontal alignment with text baseline */
+    top: 13px; /* Adjusted for better alignment with text baseline */
     width: 4px;
     height: 4px;
     background-color: currentColor;

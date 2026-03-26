@@ -67,6 +67,7 @@ export default function App() {
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [currentOptimizingEngine, setCurrentOptimizingEngine] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, OptimizationResult>>({});
   const [activeAudience, setActiveAudience] = useState<string | null>(null);
   const { setData, pages } = useResumeStore();
@@ -81,7 +82,6 @@ export default function App() {
           summary: res.summary
         },
         experience: res.experience.map((e, i) => ({ ...e, id: `exp_${i}` })),
-        early_career: res.early_career,
         skills: res.skills as any, // Cast to any to handle both structures
         education: res.education as any,
         projects: res.projects?.map(p => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any,
@@ -179,6 +179,7 @@ export default function App() {
     }
 
     setIsOptimizing(true);
+    setCurrentOptimizingEngine(selectedEngine);
     setError(null);
     setResults({});
     setActiveAudience(null);
@@ -212,7 +213,14 @@ export default function App() {
           const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig);
           
           // Update results incrementally
-          setResults(prev => ({ ...prev, [audienceId]: data }));
+          setResults(prev => ({ 
+            ...prev, 
+            [audienceId]: { 
+              ...data, 
+              _engine: selectedEngine, 
+              _model: engineConfig[selectedEngine].model 
+            } as any
+          }));
           if (!firstAudienceId) {
             firstAudienceId = audienceId;
             setActiveAudience(audienceId);
@@ -260,6 +268,8 @@ export default function App() {
       ? res.skills.join(', ') 
       : Object.entries(res.skills).map(([cat, items]) => `${cat.toUpperCase()}: ${(items as string[]).join(', ')}`).join('\n');
 
+    const projectsText = res.projects?.map(p => typeof p === 'string' ? p : `${p.title}: ${p.description}`).join('\n');
+
     const text = `
 ${masterResume.personal_info.name}
 ${masterResume.personal_info.location} | ${masterResume.personal_info.email} | ${masterResume.personal_info.phone}
@@ -277,7 +287,7 @@ ${exp.company}
 ${exp.bullets.join('\n')}
 `).join('\n')}
 
-${res.early_career && res.early_career.length > 0 ? `SELECTED EARLY CAREER\n${res.early_career.join('\n')}\n` : ''}
+${projectsText ? `PROJECTS\n${projectsText}\n` : ''}
 
 CERTIFICATIONS
 ${(res.certifications || masterResume.certifications).join('\n')}
@@ -344,7 +354,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
       const pdfHeight = 297; // A4 height in mm
 
       const captureOptions = {
-        scale: 3, // High quality
+        scale: 2, // Optimized quality/size balance
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
@@ -368,14 +378,14 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
 
       // Capture Page 1
       const canvas1 = await html2canvas(page1, captureOptions);
-      const imgData1 = canvas1.toDataURL('image/jpeg', 1.0);
+      const imgData1 = canvas1.toDataURL('image/jpeg', 0.85); // JPEG compression
       pdf.addImage(imgData1, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
 
       // Capture Page 2
       if (page2) {
         pdf.addPage();
         const canvas2 = await html2canvas(page2, captureOptions);
-        const imgData2 = canvas2.toDataURL('image/jpeg', 1.0);
+        const imgData2 = canvas2.toDataURL('image/jpeg', 0.85); // JPEG compression
         pdf.addImage(imgData2, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       }
       
@@ -409,7 +419,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
   return (
     <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-[#F5F5F5] text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
       {/* Header */}
-      <header className={`border-b sticky top-0 z-50 transition-colors ${isDarkMode ? 'bg-[#0A0A0A]/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
+      <header className={`border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-[#0A0A0A]/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isDarkMode ? 'bg-emerald-500' : 'bg-black'}`}>
@@ -424,7 +434,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             >
               {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
-            <span className={`text-[10px] font-mono uppercase tracking-widest opacity-40`}>v1.0.0-stable</span>
+            <span className={`text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-2.0.0 - STABLE</span>
           </div>
         </div>
       </header>
@@ -638,7 +648,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">Model</label>
                           <select 
                             className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
-                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                              isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
                             }`}
                             value={engineConfig[selectedEngine].model}
                             onChange={(e) => setEngineConfig({
@@ -648,22 +658,22 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           >
                             {selectedEngine === 'gemini' && (
                               <>
-                                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
-                                <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                                <option value="gemini-3.1-pro-preview" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Gemini 3.1 Pro</option>
+                                <option value="gemini-3-flash-preview" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Gemini 3 Flash</option>
                               </>
                             )}
                             {selectedEngine === 'openai' && (
                               <>
-                                <option value="gpt-4o">GPT-4o</option>
-                                <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                                <option value="gpt-4o" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>GPT-4o</option>
+                                <option value="gpt-4-turbo" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>GPT-4 Turbo</option>
+                                <option value="gpt-3.5-turbo" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>GPT-3.5 Turbo</option>
                               </>
                             )}
                             {selectedEngine === 'anthropic' && (
                               <>
-                                <option value="claude-3-5-sonnet-20240620">Claude 3.5 Sonnet</option>
-                                <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                                <option value="claude-3-5-sonnet-20240620" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Claude 3.5 Sonnet</option>
+                                <option value="claude-3-opus-20240229" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Claude 3 Opus</option>
+                                <option value="claude-3-haiku-20240307" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Claude 3 Haiku</option>
                               </>
                             )}
                           </select>
@@ -675,7 +685,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             type="password"
                             placeholder={`Enter ${selectedEngine} API key`}
                             className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
-                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                              isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
                             }`}
                             value={engineConfig[selectedEngine].apiKey}
                             onChange={(e) => setEngineConfig({
@@ -738,6 +748,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                               <tr className="opacity-40 uppercase font-bold text-[10px] tracking-widest border-b border-white/10">
                                 <th className="pb-2 px-2">Select</th>
                                 <th className="pb-2">Target Audience</th>
+                                <th className="pb-2">AI Engine</th>
                                 <th className="pb-2">Baseline</th>
                                 <th className="pb-2">Optimized</th>
                                 <th className="pb-2">Keywords</th>
@@ -767,6 +778,16 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                                           <span>{aud?.icon}</span>
                                           <span>{aud?.label}</span>
                                         </div>
+                                      </td>
+                                      <td className="py-3">
+                                        {res ? (
+                                          <div className="flex flex-col">
+                                            <span className="text-[10px] font-bold uppercase text-emerald-500">{(res as any)._engine}</span>
+                                            <span className="text-[9px] opacity-40 truncate max-w-[80px]">{(res as any)._model}</span>
+                                          </div>
+                                        ) : (
+                                          <span className="opacity-30">--</span>
+                                        )}
                                       </td>
                                       <td className="py-3">
                                         {res ? (
@@ -938,8 +959,8 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                   className="space-y-6"
                 >
                   {/* Resume Preview Pane */}
-                  <div className={`rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
-                    <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/5">
+                  <div className={`rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
+                    <div className={`p-4 border-b flex items-center justify-between ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
                           <div className="w-3 h-3 rounded-full bg-red-500/50" />
@@ -986,11 +1007,11 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                     </div>
                     
-                    <div className="p-8 bg-gray-200/50 custom-scrollbar flex flex-col items-center gap-8">
+                    <div className={`p-8 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar flex flex-col items-center gap-8`}>
                       {/* Page 1 */}
                       <div 
                         id="resume-page-1"
-                        className={`resume-page shadow-2xl transition-all duration-300 ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : ''}`}
+                        className={`resume-page transition-all duration-300 ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                       >
                         {/* Header */}
                         <div 
@@ -1006,16 +1027,16 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           <h1 className="font-bold uppercase tracking-[0.15em] mb-2" style={{ fontSize: '24px' }}>
                             {masterResume.personal_info.name}
                           </h1>
-                          <div className="font-medium opacity-80 border-t border-black/10 pt-2 flex justify-center gap-4 flex-wrap" style={{ fontSize: '12px' }}>
-                            <span>{masterResume.personal_info.location}</span>
-                            <span>&bull;</span>
-                            <span>{masterResume.personal_info.email}</span>
-                            <span>&bull;</span>
-                            <span>{masterResume.personal_info.phone}</span>
+                          <div className="font-medium opacity-80 border-t border-black/10 pt-2 flex justify-center items-center gap-x-3 gap-y-1 flex-wrap" style={{ fontSize: '11px', lineHeight: '1.2' }}>
+                            <span className="whitespace-nowrap">{masterResume.personal_info.location}</span>
+                            <span className="opacity-40">&bull;</span>
+                            <span className="whitespace-nowrap">{masterResume.personal_info.email}</span>
+                            <span className="opacity-40">&bull;</span>
+                            <span className="whitespace-nowrap">{masterResume.personal_info.phone}</span>
                             {masterResume.personal_info.linkedin && (
                               <>
-                                <span>&bull;</span>
-                                <span>LinkedIn: {masterResume.personal_info.linkedin.replace('https://', '')}</span>
+                                <span className="opacity-40">&bull;</span>
+                                <span className="whitespace-nowrap">LinkedIn: {masterResume.personal_info.linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</span>
                               </>
                             )}
                           </div>
@@ -1057,8 +1078,21 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                                 <div key={category}>
                                   <div className="font-bold uppercase text-[10px] opacity-60 mb-0.5">{category}</div>
                                   <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
-                                    {(items as string[]).map((s, i) => (
-                                      <span key={i} className="opacity-90">{s}{i < (items as string[]).length - 1 ? ',' : ''}</span>
+                                    {(items as unknown as string[]).map((s, i) => (
+                                      <span key={i} className="opacity-90">{s}{i < (items as unknown as string[]).length - 1 ? ',' : ''}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : typeof masterResume.core_competencies === 'object' ? (
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2" style={{ fontSize: '11px' }}>
+                              {Object.entries(masterResume.core_competencies).map(([category, items]) => (
+                                <div key={category}>
+                                  <div className="font-bold uppercase text-[10px] opacity-60 mb-0.5">{category}</div>
+                                  <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
+                                    {(items as unknown as string[]).map((s, i) => (
+                                      <span key={i} className="opacity-90">{s}{i < (items as unknown as string[]).length - 1 ? ',' : ''}</span>
                                     ))}
                                   </div>
                                 </div>
@@ -1066,7 +1100,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             </div>
                           ) : (
                             <div className="grid grid-cols-2 gap-x-8 gap-y-0.5" style={{ fontSize: '11px' }}>
-                              {(Array.isArray(results[activeAudience]?.skills) ? results[activeAudience].skills as string[] : masterResume.core_competencies).map((s, i) => (
+                              {(Array.isArray(results[activeAudience]?.skills) ? results[activeAudience].skills as string[] : masterResume.core_competencies as unknown as string[]).map((s, i) => (
                                 <div key={i} className="resume-bullet-item">
                                   <div className="resume-bullet-dot" />
                                   <span className="resume-bullet-text opacity-90">{s}</span>
@@ -1076,7 +1110,30 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           )}
                         </div>
 
-                        {/* Experience (Page 1) */}
+                          {/* Certifications */}
+                          <div 
+                            onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
+                            className={`mb-5 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+                            style={{ 
+                              fontFamily: getSectionStyle('certifications').fontFamily, 
+                              lineHeight: 1.4,
+                              color: getSectionStyle('certifications').color,
+                            }}
+                          >
+                            <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
+                              Professional Certifications
+                            </h2>
+                            <div className="grid grid-cols-1 gap-0.5" style={{ fontSize: '11px' }}>
+                              {(results[activeAudience]?.certifications || masterResume.certifications).map((cert, i) => (
+                                <div key={i} className="resume-bullet-item">
+                                  <div className="resume-bullet-dot" />
+                                  <span className="resume-bullet-text opacity-90">{cert}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Experience (Page 1) */}
                         <div 
                           onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'experience' })}
                           className={`cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
@@ -1091,7 +1148,20 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           </h2>
                           {(() => {
                             const allExp = results[activeAudience]?.experience || masterResume.experience;
-                            const splitIndex = Math.floor(allExp.length / 2);
+                            // Dynamic split based on bullet density to prevent Page 1 overflow
+                            const splitIndex = (() => {
+                              let bulletCount = 0;
+                              for (let i = 0; i < allExp.length; i++) {
+                                bulletCount += allExp[i].bullets.length;
+                                // Allow more content on Page 1 (up to ~18-20 bullets)
+                                // But ensure we move to Page 2 if it's getting too long
+                                if (bulletCount > 20 && i > 0) return i;
+                                // Try to fit at least 3 roles on Page 1 if space allows
+                                if (i >= 2 && bulletCount > 15) return 3;
+                                if (i >= 3) return 4; // Max 4 roles on Page 1
+                              }
+                              return Math.floor(allExp.length / 2);
+                            })();
                             return allExp.slice(0, splitIndex).map((exp, i) => (
                               <div key={i} className="mb-4 last:mb-0">
                                 <div className="flex justify-between font-bold items-baseline mb-0.5">
@@ -1116,7 +1186,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       {/* Page 2 */}
                       <div 
                         id="resume-page-2"
-                        className={`resume-page shadow-2xl transition-all duration-300 relative overflow-hidden ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : ''}`}
+                        className={`resume-page transition-all duration-300 relative overflow-hidden ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                       >
                         {/* Experience Continued */}
                         <div 
@@ -1130,7 +1200,17 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         >
                           {(() => {
                             const allExp = results[activeAudience]?.experience || masterResume.experience;
-                            const splitIndex = Math.floor(allExp.length / 2);
+                            // Use same dynamic split logic for consistency
+                            const splitIndex = (() => {
+                              let bulletCount = 0;
+                              for (let i = 0; i < allExp.length; i++) {
+                                bulletCount += allExp[i].bullets.length;
+                                if (bulletCount > 20 && i > 0) return i;
+                                if (i >= 2 && bulletCount > 15) return 3;
+                                if (i >= 3) return 4;
+                              }
+                              return Math.floor(allExp.length / 2);
+                            })();
                             return allExp.slice(splitIndex).map((exp, i) => (
                               <div key={i} className="mb-4 last:mb-0">
                                 <div className="flex justify-between font-bold items-baseline mb-0.5">
@@ -1149,47 +1229,9 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                               </div>
                             ));
                           })()}
-
-                          {/* Early Career */}
-                          {results[activeAudience]?.early_career && results[activeAudience].early_career.length > 0 && (
-                            <div className="mt-4">
-                              <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
-                                Selected Early Career
-                              </h2>
-                              <div className="space-y-0.5">
-                                {results[activeAudience].early_career.map((b, i) => (
-                                  <div key={i} className="resume-bullet-item" style={{ fontSize: '11px' }}>
-                                    <div className="resume-bullet-dot" />
-                                    <span className="resume-bullet-text opacity-90">{b}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
                         </div>
 
-                        {/* Certifications */}
-                        <div 
-                          onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
-                          className={`mb-5 cursor-pointer transition-all rounded p-2 -m-2 ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
-                          style={{ 
-                            fontFamily: getSectionStyle('certifications').fontFamily, 
-                            lineHeight: 1.4,
-                            color: getSectionStyle('certifications').color,
-                          }}
-                        >
-                          <h2 className="font-semibold mb-2 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
-                            Professional Certifications
-                          </h2>
-                          <div className="grid grid-cols-1 gap-0.5" style={{ fontSize: '11px' }}>
-                            {(results[activeAudience]?.certifications || masterResume.certifications).map((cert, i) => (
-                              <div key={i} className="resume-bullet-item">
-                                <div className="resume-bullet-dot" />
-                                <span className="resume-bullet-text opacity-90">{cert}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                        {/* Experience Continued */}
 
                         {/* Projects */}
                         {results[activeAudience]?.projects && results[activeAudience].projects.length > 0 && (
@@ -1205,13 +1247,15 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             <h2 className="font-semibold mb-3 uppercase tracking-widest border-b border-black/20 pb-1" style={{ fontSize: '14px' }}>
                               Key Strategic Projects
                             </h2>
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                               {results[activeAudience].projects.map((proj, i) => (
-                                <div key={i} className="resume-bullet-item" style={{ fontSize: '11px' }}>
-                                  <div className="resume-bullet-dot" />
-                                  <span className="resume-bullet-text opacity-90">
+                                <div key={i} className="mb-2 last:mb-0">
+                                  <div className="font-bold mb-1" style={{ fontSize: '11px' }}>
                                     {typeof proj === 'string' ? proj : (proj as any).title}
-                                  </span>
+                                  </div>
+                                  <div className="opacity-80 leading-relaxed" style={{ fontSize: '10.5px' }}>
+                                    {typeof proj === 'string' ? '' : (proj as any).description}
+                                  </div>
                                 </div>
                               ))}
                             </div>
