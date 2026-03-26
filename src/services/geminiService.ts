@@ -36,13 +36,47 @@ export interface EngineConfig {
   apiKey?: string;
 }
 
+export async function fetchJobDescription(url: string, config: EngineConfig): Promise<string> {
+  if (config.engine !== 'gemini') {
+    throw new Error("URL fetching is currently only supported with the Gemini engine.");
+  }
+
+  const prompt = `
+You are an expert recruiter and data extractor.
+Please read the following job posting URL and extract the full job description text.
+Include the job title, company name, responsibilities, requirements, and any other relevant details.
+Format the output as clean, readable text. Do not include any JSON formatting or extra conversational text.
+
+JOB URL: ${url}
+`;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: config.model,
+      contents: prompt,
+      config: {
+        tools: [{ urlContext: {} }],
+      }
+    });
+    
+    return response.text || "";
+  } catch (error) {
+    console.error("Error fetching job description:", error);
+    throw error;
+  }
+}
+
 export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
   targetRole: string,
   mode: "conservative" | "balanced" | "aggressive",
   audience: string,
-  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
+  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' },
+  linkedInUrl?: string,
+  linkedInPdfText?: string,
+  jobUrl?: string
 ): Promise<OptimizationResult> {
   const prompt = `
 ROLE:
@@ -93,7 +127,10 @@ LAYOUT-SAFE CONTENT RULES (MANDATORY):
 
 INPUT:
 RESUME: ${resumeText}
-JOB DESCRIPTION: ${jobDescription}
+${linkedInPdfText ? `LINKEDIN PROFILE EXPORT: ${linkedInPdfText}` : ''}
+${linkedInUrl ? `LINKEDIN PROFILE URL: ${linkedInUrl}` : ''}
+${jobDescription ? `JOB DESCRIPTION: ${jobDescription}` : ''}
+${jobUrl ? `JOB DESCRIPTION URL: ${jobUrl}` : ''}
 TARGET ROLE: ${targetRole}
 OPTIMIZATION MODE: ${mode}
 TARGET AUDIENCE: ${audience}
@@ -101,8 +138,8 @@ TARGET AUDIENCE: ${audience}
 -----------------------------------
 ⚙️ PROCESSING STEPS
 -----------------------------------
-1. Extract key requirements and keywords from JD.
-2. Identify gaps between resume and JD.
+1. Extract key requirements and keywords from JD (or JD URL).
+2. Identify gaps between resume (and LinkedIn profile) and JD.
 3. Calculate a BASELINE ATS score (0-100).
 4. Optimize all sections following the STRICT RULES above.
 5. Ensure ATS keyword density is improved naturally.
@@ -123,6 +160,7 @@ TARGET AUDIENCE: ${audience}
           model: currentModel,
           contents: prompt,
           config: {
+            tools: [{ urlContext: {} }],
             maxOutputTokens: 16384,
             responseMimeType: "application/json",
             responseSchema: {

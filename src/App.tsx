@@ -34,7 +34,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useResumeStore } from './store';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
 import masterResume from './services/masterResume.json';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -71,6 +71,25 @@ export default function App() {
   const [results, setResults] = useState<Record<string, OptimizationResult>>({});
   const [activeAudience, setActiveAudience] = useState<string | null>(null);
   const { setData, pages } = useResumeStore();
+
+  const [linkedInUrl, setLinkedInUrl] = useState(() => localStorage.getItem('linkedInUrl') || '');
+  const [linkedInPdfText, setLinkedInPdfText] = useState(() => localStorage.getItem('linkedInPdfText') || '');
+  const [linkedInFileName, setLinkedInFileName] = useState(() => localStorage.getItem('linkedInFileName') || '');
+  const [jobUrl, setJobUrl] = useState('');
+  const [isExtractingLinkedIn, setIsExtractingLinkedIn] = useState(false);
+  const [isFetchingJob, setIsFetchingJob] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('linkedInUrl', linkedInUrl);
+  }, [linkedInUrl]);
+
+  useEffect(() => {
+    localStorage.setItem('linkedInPdfText', linkedInPdfText);
+  }, [linkedInPdfText]);
+
+  useEffect(() => {
+    localStorage.setItem('linkedInFileName', linkedInFileName);
+  }, [linkedInFileName]);
 
   // Sync results with ResumeStore
   useEffect(() => {
@@ -118,6 +137,29 @@ export default function App() {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   
   const resumePreviewRef = useRef<HTMLDivElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+
+  useEffect(() => {
+    if (!previewContainerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        const containerWidth = entry.contentRect.width;
+        const targetWidth = 794; // A4 width in px
+        const padding = 64; // 32px padding on each side
+        const availableWidth = containerWidth - padding;
+        
+        if (availableWidth < targetWidth) {
+          setZoom(availableWidth / targetWidth);
+        } else {
+          setZoom(1);
+        }
+      }
+    });
+
+    observer.observe(previewContainerRef.current);
+    return () => observer.disconnect();
+  }, [activeAudience]); // Re-run when audience changes to ensure it catches the new DOM
 
   const extractTextFromPDF = async (file: File) => {
     setIsExtracting(true);
@@ -143,6 +185,30 @@ export default function App() {
     }
   };
 
+  const extractLinkedInTextFromPDF = async (file: File) => {
+    setIsExtractingLinkedIn(true);
+    setLinkedInFileName(file.name);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item: any) => item.str).join(' ');
+        fullText += pageText + '\n';
+      }
+      
+      setLinkedInPdfText(fullText);
+    } catch (err) {
+      console.error('Error extracting LinkedIn PDF text:', err);
+      setError('Failed to extract text from LinkedIn PDF.');
+    } finally {
+      setIsExtractingLinkedIn(false);
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -161,15 +227,69 @@ export default function App() {
     }
   };
 
+  const handleLinkedInFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type === 'application/pdf') {
+        extractLinkedInTextFromPDF(file);
+      } else if (file.type === 'text/plain') {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          setLinkedInPdfText(event.target?.result as string);
+          setLinkedInFileName(file.name);
+        };
+        reader.readAsText(file);
+      } else {
+        setError('Please upload a PDF or TXT file.');
+      }
+    }
+  };
+
   const toggleAudience = (id: string) => {
     setSelectedAudiences(prev => 
       prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
     );
   };
 
+  const handleFetchJobDescription = async () => {
+    if (!jobUrl) {
+      setError('Please enter a job URL first.');
+      return;
+    }
+    
+    setIsFetchingJob(true);
+    setError(null);
+    try {
+      const currentEngineConfig = {
+        engine: selectedEngine as EngineType,
+        model: engineConfig[selectedEngine as EngineType].model,
+        apiKey: engineConfig[selectedEngine as EngineType].apiKey
+      };
+      const text = await fetchJobDescription(jobUrl, currentEngineConfig);
+      
+      const lowerText = text.toLowerCase();
+      if (
+        lowerText.includes('anti-scraping') || 
+        lowerText.includes('blocked by linkedin') || 
+        lowerText.includes('security policies currently block') ||
+        lowerText.includes('unable to retrieve specific')
+      ) {
+        setError('LinkedIn prevents automated extraction of this job posting. Please copy and paste the job description text manually into the text area below.');
+        setJobDescription('');
+      } else {
+        setJobDescription(text);
+      }
+    } catch (err: any) {
+      console.error('Error fetching job description:', err);
+      setError(`Failed to fetch job description: ${err.message || 'Unknown error'}. You can still paste it manually.`);
+    } finally {
+      setIsFetchingJob(false);
+    }
+  };
+
   const handleOptimize = async () => {
-    if (!jobDescription) {
-      setError('Please provide a job description to optimize against.');
+    if (!jobDescription && !jobUrl) {
+      setError('Please provide a job description or job URL to optimize against.');
       return;
     }
 
@@ -210,7 +330,7 @@ export default function App() {
             model: engineConfig[selectedEngine].model,
             apiKey: engineConfig[selectedEngine].apiKey
           };
-          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig);
+          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig, linkedInUrl, linkedInPdfText, jobUrl);
           
           // Update results incrementally
           setResults(prev => ({ 
@@ -417,7 +537,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
   };
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-[#F5F5F5] text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
+    <div className={`min-h-screen transition-colors duration-300 overflow-x-hidden ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-[#F5F5F5] text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
       {/* Header */}
       <header className={`border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-[#0A0A0A]/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -699,17 +819,108 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                   </AnimatePresence>
                 </div>
 
+                {/* LinkedIn Profile */}
+                <div>
+                  <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>LinkedIn Profile (Optional)</label>
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input 
+                        type="url"
+                        placeholder="https://linkedin.com/in/yourprofile"
+                        className={`flex-1 px-4 py-3 text-sm border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                          isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                        }`}
+                        value={linkedInUrl}
+                        onChange={(e) => setLinkedInUrl(e.target.value)}
+                      />
+                    </div>
+                    
+                    <div className={`relative border-2 border-dashed rounded-xl p-3 transition-all ${
+                      isDarkMode ? 'bg-white/5 border-white/10 hover:border-emerald-500/50' : 'bg-[#F9F9F9] border-black/10 hover:border-emerald-500/50'
+                    }`}>
+                      <input 
+                        type="file"
+                        accept=".pdf,.txt"
+                        onChange={handleLinkedInFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className="flex items-center justify-center gap-2">
+                        {isExtractingLinkedIn ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-xs font-medium opacity-60">Extracting...</span>
+                          </div>
+                        ) : linkedInFileName ? (
+                          <div className="flex items-center justify-between w-full px-2">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-emerald-500" />
+                              <span className="text-xs font-bold truncate max-w-[150px]">{linkedInFileName}</span>
+                            </div>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setLinkedInFileName(''); setLinkedInPdfText(''); }}
+                              className="text-[10px] font-bold text-red-400 hover:text-red-300 uppercase tracking-widest z-20 relative"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <Upload className="w-4 h-4 opacity-30" />
+                            <span className="text-xs font-medium opacity-60">
+                              Or upload LinkedIn PDF export
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Job Description */}
                 <div>
                   <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Job Description</label>
-                  <textarea 
-                    placeholder="Paste the target job description here..."
-                    className={`w-full h-32 p-4 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none text-sm leading-relaxed ${
-                      isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
-                    }`}
-                    value={jobDescription}
-                    onChange={(e) => setJobDescription(e.target.value)}
-                  />
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input 
+                        type="url"
+                        placeholder="Job Posting URL (Optional)"
+                        className={`flex-1 px-4 py-3 text-sm border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                          isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                        }`}
+                        value={jobUrl}
+                        onChange={(e) => setJobUrl(e.target.value)}
+                      />
+                      <button
+                        onClick={handleFetchJobDescription}
+                        disabled={!jobUrl || isFetchingJob}
+                        className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 ${
+                          isFetchingJob || !jobUrl
+                            ? (isDarkMode ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-black/5 text-black/30 cursor-not-allowed')
+                            : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20'
+                        }`}
+                      >
+                        {isFetchingJob ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            Fetching...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-3 h-3" />
+                            Fetch
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <textarea 
+                      placeholder="Paste the target job description here..."
+                      className={`w-full h-32 p-4 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none text-sm leading-relaxed ${
+                        isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                      }`}
+                      value={jobDescription}
+                      onChange={(e) => setJobDescription(e.target.value)}
+                    />
+                  </div>
                 </div>
 
                 {error && (
@@ -979,6 +1190,23 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             OVERFLOW DETECTED
                           </div>
                         )}
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                          <button 
+                            onClick={() => setZoom(z => Math.max(0.2, z - 0.1))}
+                            className="p-1 hover:bg-white/10 rounded transition-colors"
+                            title="Zoom Out"
+                          >
+                            <span className="text-xs font-bold">-</span>
+                          </button>
+                          <span className="text-[10px] font-mono w-8 text-center">{Math.round(zoom * 100)}%</span>
+                          <button 
+                            onClick={() => setZoom(z => Math.min(2, z + 0.1))}
+                            className="p-1 hover:bg-white/10 rounded transition-colors"
+                            title="Zoom In"
+                          >
+                            <span className="text-xs font-bold">+</span>
+                          </button>
+                        </div>
                         <button 
                           onClick={copyResumeText}
                           className="p-2 rounded-lg hover:bg-white/10 transition-colors text-xs font-bold uppercase tracking-wider flex items-center gap-2"
@@ -1007,8 +1235,17 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                     </div>
                     
-                    <div className={`p-8 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar flex flex-col items-center gap-8`}>
-                      {/* Page 1 */}
+                    <div 
+                      ref={previewContainerRef}
+                      className={`p-4 md:p-8 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar overflow-x-auto w-full`}
+                    >
+                      <div 
+                        className="flex flex-col gap-8 w-max mx-auto"
+                        style={{
+                          zoom: zoom
+                        }}
+                      >
+                        {/* Page 1 */}
                       <div 
                         id="resume-page-1"
                         className={`resume-page transition-all duration-300 ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
@@ -1286,6 +1523,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             </div>
                           ))}
                         </div>
+                      </div>
                       </div>
                     </div>
 
