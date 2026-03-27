@@ -70,6 +70,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'config' | 'style' | 'tools'>('config');
   const [targetRole, setTargetRole] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
+  const [fastMode, setFastMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const { state: formattingState, dispatch: formattingDispatch } = useFormatting();
   const { activeSection, styles: sectionStyles } = formattingState;
@@ -440,7 +441,7 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
             model: engineConfig[selectedEngine].model,
             apiKey: engineConfig[selectedEngine].apiKey
           };
-          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig, linkedInUrl, linkedInPdfText, jobUrl);
+          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig, linkedInUrl, linkedInPdfText, jobUrl, fastMode);
           
           // Update token usage
           if (data._usage) {
@@ -908,17 +909,17 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             >
               {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
-            <span className={`text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-2.0.0 - STABLE</span>
+            <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-2.0.0 - STABLE</span>
           </div>
         </div>
       </header>
 
-      <div className="w-full mx-auto px-4 py-8">
-        <div className="flex gap-8 relative min-h-[calc(100vh-200px)]">
+      <div className="w-full max-w-7xl mx-auto px-4 py-4 md:py-8">
+        <div className="flex flex-col lg:flex-row gap-8 relative min-h-[calc(100vh-200px)]">
           {/* Configuration Pane */}
           <div 
-            style={{ width: `${configWidth}px` }}
-            className={`flex-shrink-0 h-screen overflow-y-auto`}
+            className={`w-full lg:flex-shrink-0 lg:h-screen lg:overflow-y-auto lg:sticky lg:top-20 custom-scrollbar`}
+            style={{ width: typeof window !== 'undefined' && window.innerWidth >= 1024 ? `${configWidth}px` : '100%' }}
           >
             <div className="sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-4 border-b border-black/5 dark:border-white/10">
               <div className="flex gap-1 p-1 bg-black/5 dark:bg-white/5 rounded-lg">
@@ -1023,7 +1024,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             </motion.div>
                           )}
                         </AnimatePresence>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           {(['conservative', 'balanced', 'aggressive'] as const).map((m) => (
                             <button
                               key={m}
@@ -1038,6 +1039,15 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             </button>
                           ))}
                         </div>
+                        <label className="flex items-center gap-2 mt-4 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={fastMode} 
+                            onChange={(e) => setFastMode(e.target.checked)}
+                            className="accent-emerald-500"
+                          />
+                          <span className="text-[11px] font-bold">Fast Mode (Use Flash Model)</span>
+                        </label>
                       </div>
                       {/* Resume Upload */}
                       <div>
@@ -1618,7 +1628,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
         {/* Resize Handle */}
           <div 
             onMouseDown={handleMouseDown}
-            className={`w-1 cursor-col-resize hover:bg-emerald-500/50 transition-colors self-stretch rounded-full mx-2 ${isResizing ? 'bg-emerald-500' : 'bg-white/10'}`}
+            className={`hidden lg:block w-1 cursor-col-resize hover:bg-emerald-500/50 transition-colors self-stretch rounded-full mx-2 ${isResizing ? 'bg-emerald-500' : 'bg-white/10'}`}
           />
 
           {/* Result Section */}
@@ -1668,23 +1678,24 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                 >
                   {/* Resume Preview Pane */}
                   <div className={`rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
-                    <div className={`p-4 border-b flex items-center justify-between ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
-                      <div className="flex items-center gap-4">
+                    <div className={`p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-4 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
+                      <div className="flex items-center justify-between w-full sm:w-auto gap-4">
                         <div className="flex items-center gap-2">
                           <div className="w-3 h-3 rounded-full bg-red-500/50" />
                           <div className="w-3 h-3 rounded-full bg-yellow-500/50" />
                           <div className="w-3 h-3 rounded-full bg-green-500/50" />
                         </div>
-                        <div className="h-4 w-[1px] bg-white/10 mx-2" />
+                        <div className="h-4 w-[1px] bg-white/10 mx-2 hidden sm:block" />
                         <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">
                           Editing: <span className="text-emerald-400">{activeSection || 'Select a section'}</span>
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-between w-full sm:w-auto gap-2">
                         {overflow.isOverflowing && (
                           <div className="flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-500 text-[10px] font-bold animate-pulse">
                             <AlertCircle className="w-3 h-3" />
-                            OVERFLOW DETECTED
+                            <span className="hidden sm:inline">OVERFLOW DETECTED</span>
+                            <span className="sm:hidden">OVERFLOW</span>
                           </div>
                         )}
                         <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
@@ -1722,7 +1733,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           title="Copy text for selectable use"
                         >
                           <Copy className="w-4 h-4" />
-                          Copy Text
+                          <span className="hidden md:inline">Copy Text</span>
                         </button>
                         <button 
                           onClick={downloadPDF}
@@ -1732,12 +1743,13 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           {isDownloading ? (
                             <>
                               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              Generating...
+                              <span className="hidden sm:inline">Generating...</span>
                             </>
                           ) : (
                             <>
                               <Download className="w-4 h-4" />
-                              Download PDF
+                              <span className="hidden sm:inline">Download PDF</span>
+                              <span className="sm:hidden">PDF</span>
                             </>
                           )}
                         </button>

@@ -28,6 +28,9 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [newName, setNewName] = useState('');
+
   useEffect(() => {
     const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
     setHistory(savedHistory);
@@ -76,9 +79,11 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   };
 
   const saveVersion = () => {
+    const timestamp = new Date().toISOString();
     const newVersion = { 
       id: Date.now(), 
-      timestamp: new Date().toISOString(), 
+      timestamp,
+      name: `Version ${new Date(timestamp).toLocaleString()}`,
       data: { 
         resumeText, 
         jobDescription,
@@ -90,6 +95,14 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
   };
 
+  const renameVersion = (id: number) => {
+    const newHistory = history.map(v => v.id === id ? { ...v, name: newName } : v);
+    setHistory(newHistory);
+    localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
+    setRenamingId(null);
+    setNewName('');
+  };
+
   const deleteVersion = (id: number) => {
     const newHistory = history.filter(v => v.id !== id);
     setHistory(newHistory);
@@ -98,24 +111,24 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
 
   return (
     <div className={`rounded-xl border p-4 ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-col sm:flex-row gap-2 mb-4">
         <button 
           onClick={() => setActiveTab('skillGap')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-xs font-bold transition-all ${activeTab === 'skillGap' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'skillGap' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
         >
           <Zap className="w-4 h-4"/>
           Gap Analysis
         </button>
         <button 
           onClick={() => setActiveTab('interview')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-xs font-bold transition-all ${activeTab === 'interview' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'interview' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
         >
           <Brain className="w-4 h-4"/>
           Interview
         </button>
         <button 
           onClick={() => setActiveTab('history')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-xs font-bold transition-all ${activeTab === 'history' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'history' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
         >
           <History className="w-4 h-4"/>
           Versions
@@ -202,28 +215,50 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
               <p className="text-center opacity-40 text-[10px] py-8">No saved versions yet.</p>
             ) : (
               history.map((v) => (
-                <div key={v.id} className="group flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10 hover:border-emerald-500/30 transition-all">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold">{new Date(v.timestamp).toLocaleDateString()}</span>
-                    <span className="text-[9px] opacity-50">{new Date(v.timestamp).toLocaleTimeString()}</span>
+                  <div key={v.id} className="group flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10 hover:border-emerald-500/30 transition-all">
+                    <div className="flex flex-col flex-1 min-w-0">
+                      {renamingId === v.id ? (
+                        <div className="flex gap-1">
+                          <input 
+                            value={newName} 
+                            onChange={(e) => setNewName(e.target.value)}
+                            className="bg-black/20 text-[10px] p-1 rounded w-full"
+                          />
+                          <button onClick={() => renameVersion(v.id)} className="text-emerald-500 text-[10px]">Save</button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-[10px] font-bold truncate">{v.name || `Version ${new Date(v.timestamp).toLocaleString()}`}</span>
+                          <span className="text-[9px] opacity-50">{new Date(v.timestamp).toLocaleTimeString()}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {renamingId !== v.id && (
+                        <button 
+                          onClick={() => { setRenamingId(v.id); setNewName(v.name || ''); }}
+                          className="p-1.5 rounded hover:bg-white/10 text-emerald-500"
+                          title="Rename version"
+                        >
+                          <span className="text-[10px]">Edit</span>
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => onRestore?.(v)}
+                        className="p-1.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-black transition-all"
+                        title="Restore this version"
+                      >
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                      <button 
+                        onClick={() => deleteVersion(v.id)}
+                        className="p-1.5 rounded bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-black transition-all"
+                        title="Delete version"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => onRestore?.(v)}
-                      className="p-1.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-black transition-all"
-                      title="Restore this version"
-                    >
-                      <ChevronRight className="w-3 h-3" />
-                    </button>
-                    <button 
-                      onClick={() => deleteVersion(v.id)}
-                      className="p-1.5 rounded bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-black transition-all"
-                      title="Delete version"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
               ))
             )}
           </div>

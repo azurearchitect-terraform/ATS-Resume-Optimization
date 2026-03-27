@@ -81,8 +81,10 @@ export async function optimizeResume(
   config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' },
   linkedInUrl?: string,
   linkedInPdfText?: string,
-  jobUrl?: string
+  jobUrl?: string,
+  fastMode: boolean = false
 ): Promise<OptimizationResult> {
+  const modelToUse = fastMode ? 'gemini-3-flash-preview' : config.model;
   const prompt = `
 ROLE:
 You are an expert Executive Resume Strategist and Technical Recruiter specializing in the Azure Cloud ecosystem for the 2026 job market.
@@ -162,7 +164,7 @@ TARGET AUDIENCE: ${audience}
       if (config.engine === 'gemini') {
         const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
         const response = await ai.models.generateContent({
-          model: currentModel,
+          model: modelToUse,
           contents: prompt,
           config: {
             tools: [{ urlContext: {} }],
