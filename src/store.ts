@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ResumeData, LayoutBlock, ResumeTemplate } from './types';
 import { TEMPLATES } from './templates';
+import { OptimizationResult } from './services/geminiService';
 
 interface ResumeStore {
   data: ResumeData;
@@ -10,10 +11,20 @@ interface ResumeStore {
   isSnapToGrid: boolean;
   isSmartGuidesEnabled: boolean;
   
+  // AI Optimization State
+  isOptimizing: boolean;
+  results: Record<string, OptimizationResult>;
+  activeAudience: string | null;
+  currentOptimizingEngine: string | null;
+  
   setData: (data: ResumeData) => void;
   setTemplate: (templateId: string) => void;
   toggleGrid: () => void;
   updateBlockPosition: (pageIndex: number, blockId: string, x: number, y: number) => void;
+  setIsOptimizing: (val: boolean) => void;
+  setResults: (results: Record<string, OptimizationResult>) => void;
+  setActiveAudience: (audience: string | null) => void;
+  setCurrentOptimizingEngine: (engine: string | null) => void;
 }
 
 /**
@@ -38,6 +49,12 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   isGridVisible: false,
   isSnapToGrid: true,
   isSmartGuidesEnabled: true,
+  
+  // AI Optimization State
+  isOptimizing: false,
+  results: {},
+  activeAudience: null,
+  currentOptimizingEngine: null,
 
   setData: (data) => {
     set({ data, pages: [] });
@@ -61,4 +78,9 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       }
     }
   },
+
+  setIsOptimizing: (val) => set({ isOptimizing: val }),
+  setResults: (results) => set({ results }),
+  setActiveAudience: (activeAudience) => set({ activeAudience }),
+  setCurrentOptimizingEngine: (currentOptimizingEngine) => set({ currentOptimizingEngine }),
 }));

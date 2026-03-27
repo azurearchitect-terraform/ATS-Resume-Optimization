@@ -3,7 +3,10 @@ import React, { createContext, useContext, useReducer, ReactNode } from 'react';
 export const DEFAULT_STYLE = {
   fontFamily: 'Inter',
   fontSize: 10.5,
-  lineHeight: 1.4,
+  lineHeight: 1.5,
+  letterSpacing: 0,
+  padding: 0,
+  margin: 24,
   color: '#1a1a1a',
 };
 
@@ -14,7 +17,8 @@ interface FormattingState {
 
 type FormattingAction =
   | { type: 'SET_ACTIVE_SECTION'; sectionId: string | null }
-  | { type: 'UPDATE_STYLE'; sectionId: string; style: any };
+  | { type: 'UPDATE_STYLE'; sectionId: string; style: any }
+  | { type: 'RESET_STYLE'; sectionId: string | null };
 
 const initialState: FormattingState = {
   activeSection: null,
@@ -33,6 +37,21 @@ function formattingReducer(state: FormattingState, action: FormattingAction): Fo
           [action.sectionId]: { ...state.styles[action.sectionId], ...action.style },
         },
       };
+    case 'RESET_STYLE':
+      if (action.sectionId) {
+        return {
+          ...state,
+          styles: {
+            ...state.styles,
+            [action.sectionId]: { ...DEFAULT_STYLE },
+          },
+        };
+      } else {
+        return {
+          ...state,
+          styles: {},
+        };
+      }
     default:
       return state;
   }

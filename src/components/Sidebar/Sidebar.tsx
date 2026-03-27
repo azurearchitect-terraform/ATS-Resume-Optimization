@@ -117,8 +117,6 @@ export const Sidebar = () => {
     jobDescription, 
     targetRole, 
     updateConfig,
-    isOptimizing,
-    setIsOptimizing,
     updateElement,
     aiEngine,
     audience,
@@ -146,70 +144,6 @@ export const Sidebar = () => {
       const oldIndex = elements.findIndex((el) => el.id === active.id);
       const newIndex = elements.findIndex((el) => el.id === over.id);
       reorderElements(oldIndex, newIndex);
-    }
-  };
-
-  const handleOptimizeResume = async () => {
-    if (!jobDescription && !targetRole) {
-      alert("Please provide a job description or target role in the Configuration tab first.");
-      setActiveTab('config');
-      return;
-    }
-
-    setIsOptimizing(true);
-    const originalElements = JSON.parse(JSON.stringify(elements));
-
-    try {
-      const result = await optimizeFullResume(masterResume, jobDescription, targetRole, aiEngine, audience);
-      
-      const optimizedElements: CanvasElement[] = elements.map(el => {
-        if (el.id === 'summary-text') {
-          return { ...el, content: result.summary };
-        }
-        if (el.id === 'skills-text') {
-          const skillsText = Array.isArray(result.skills) 
-            ? result.skills.join(', ') 
-            : Object.values(result.skills).flat().join(', ');
-          return { ...el, content: skillsText };
-        }
-        
-        // Map experience bullets
-        if (el.id.startsWith('exp-bullets-')) {
-          const index = parseInt(el.id.split('-').pop() || '0');
-          if (result.experience[index]) {
-            return { ...el, content: result.experience[index].bullets.map((b: string) => `• ${b}`).join('\n') };
-          }
-        }
-
-        // Map experience headers
-        if (el.id.startsWith('exp-header-')) {
-          const index = parseInt(el.id.split('-').pop() || '0');
-          if (result.experience[index]) {
-            return { ...el, content: `${result.experience[index].role} | ${result.experience[index].company}` };
-          }
-        }
-
-        return el;
-      });
-
-      setComparisonData({
-        original: originalElements,
-        optimized: optimizedElements,
-        scores: {
-          baseline: result.baseline_score,
-          optimized: result.match_score,
-          criteria: []
-        },
-        audienceAlignment: result.audience_alignment_notes,
-        improvementNotes: result.improvement_notes,
-        audienceNotes: result.audience_alignment_notes,
-        isVisible: true
-      });
-    } catch (error) {
-      console.error("Optimize Resume Error:", error);
-      alert("Failed to optimize resume. Please check your AI configuration.");
-    } finally {
-      setIsOptimizing(false);
     }
   };
 
@@ -410,25 +344,6 @@ export const Sidebar = () => {
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* AI Optimization Section */}
-            <div className={cn("p-5 rounded-2xl border transition-all mt-4", darkMode ? "bg-indigo-900/20 border-indigo-500/30" : "bg-indigo-600 border-indigo-500")}>
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles size={16} className="text-white" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Optimizer</h3>
-              </div>
-              <p className="text-[10px] text-indigo-100 mb-4 leading-relaxed">
-                Tailor your resume to the job description and target role using advanced AI.
-              </p>
-              <button 
-                onClick={handleOptimizeResume}
-                disabled={isOptimizing}
-                className="w-full py-3 bg-white text-indigo-600 rounded-xl text-xs font-bold hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-md"
-              >
-                {isOptimizing ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                {isOptimizing ? 'Optimizing Resume...' : 'Optimize Resume'}
-              </button>
             </div>
           </div>
         )}

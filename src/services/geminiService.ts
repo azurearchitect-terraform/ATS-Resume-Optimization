@@ -26,6 +26,11 @@ export interface OptimizationResult {
   baseline_score: number;
   improvement_notes: string[];
   audience_alignment_notes: string;
+  _usage?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  };
 }
 
 export type EngineType = 'gemini' | 'openai' | 'anthropic';
@@ -220,6 +225,22 @@ TARGET AUDIENCE: ${audience}
           }
         });
         resultText = response.text || "";
+        const usage = response.usageMetadata;
+        
+        try {
+          const parsed = JSON.parse(resultText);
+          if (usage) {
+            parsed._usage = {
+              promptTokenCount: usage.promptTokenCount || 0,
+              candidatesTokenCount: usage.candidatesTokenCount || 0,
+              totalTokenCount: usage.totalTokenCount || 0
+            };
+          }
+          return parsed;
+        } catch (e) {
+          console.error("Error parsing AI response:", e);
+          throw new Error("The AI returned an invalid response format. Please try again.");
+        }
       } else if (config.engine === 'openai') {
         const openai = new OpenAI({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
         const response = await openai.chat.completions.create({
@@ -277,5 +298,122 @@ TARGET AUDIENCE: ${audience}
     }
   }
 
+// ... existing code ...
   throw new Error(`Maximum retries exceeded for ${config.engine}. Please try again in a few minutes.`);
+}
+
+export async function analyzeSkillGap(
+  resumeText: string,
+  jobDescription: string,
+  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
+): Promise<{ missing: string[], present: string[] }> {
+  const prompt = `
+      Analyze the following resume and job description.
+      Identify the skills present in the resume and the skills required by the job description that are missing from the resume.
+      Return the result as a JSON object: { "missing": string[], "present": string[] }
+      
+      RESUME: ${resumeText}
+      JOB DESCRIPTION: ${jobDescription}
+    `;
+
+  if (config.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: config.model,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            missing: { type: Type.ARRAY, items: { type: Type.STRING } },
+            present: { type: Type.ARRAY, items: { type: Type.STRING } }
+          },
+          required: ["missing", "present"]
+        }
+      }
+    });
+    return JSON.parse(response.text || '{"missing":[], "present":[]}');
+  } else if (config.engine === 'openai') {
+    const openai = new OpenAI({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+    const response = await openai.chat.completions.create({
+      model: config.model,
+      messages: [
+        { role: "system", content: "You are a professional resume analyzer. Return ONLY valid JSON." },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
+    });
+    return JSON.parse(response.choices[0].message.content || '{"missing":[], "present":[]}');
+  } else if (config.engine === 'anthropic') {
+    const anthropic = new Anthropic({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+    const response = await anthropic.messages.create({
+      model: config.model,
+      max_tokens: 4096,
+      messages: [
+        { role: "user", content: prompt + "\n\nReturn ONLY the JSON object." }
+      ]
+    });
+    const text = (response.content[0] as any).text || "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return JSON.parse(jsonMatch ? jsonMatch[0] : text || '{"missing":[], "present":[]}');
+  }
+  
+  throw new Error(`Unsupported engine: ${config.engine}`);
+}
+
+export async function generateInterviewQuestions(
+  jobDescription: string,
+  resumeText: string,
+  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
+): Promise<string[]> {
+  const prompt = `
+      Based on the following job description and the candidate's resume, generate 5-10 potential interview questions.
+      Return the result as a JSON array of strings: [ "question1", "question2", ... ]
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+    `;
+
+  if (config.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: config.model,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      }
+    });
+    return JSON.parse(response.text || '[]');
+  } else if (config.engine === 'openai') {
+    const openai = new OpenAI({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+    const response = await openai.chat.completions.create({
+      model: config.model,
+      messages: [
+        { role: "system", content: "You are a professional interview coach. Return ONLY valid JSON array of strings." },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
+    });
+    const parsed = JSON.parse(response.choices[0].message.content || '{}');
+    return Array.isArray(parsed) ? parsed : (parsed.questions || []);
+  } else if (config.engine === 'anthropic') {
+    const anthropic = new Anthropic({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+    const response = await anthropic.messages.create({
+      model: config.model,
+      max_tokens: 4096,
+      messages: [
+        { role: "user", content: prompt + "\n\nReturn ONLY the JSON array." }
+      ]
+    });
+    const text = (response.content[0] as any).text || "";
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    return JSON.parse(jsonMatch ? jsonMatch[0] : text || '[]');
+  }
+
+  throw new Error(`Unsupported engine: ${config.engine}`);
 }

@@ -87,16 +87,23 @@
   /* Page margins and typography system */
   .resume-page {
     width: 210mm;
-    height: 297mm;
     min-width: 210mm;
     min-height: 297mm;
+    height: auto;
     background-color: white;
-    padding: 15mm 15mm 20mm 15mm; /* Standard professional margins */
+    padding: 20mm 15mm 20mm 15mm; /* Increased top padding */
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
     position: relative;
     overflow: hidden;
     color: #1A1A1A;
+  }
+
+  .resume-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    position: relative;
+    width: 100%;
   }
 }
