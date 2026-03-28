@@ -38,7 +38,7 @@ import { AdditionalTools } from './components/AdditionalTools';
 import { useResumeStore } from './store';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeBestAudience, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
 import masterResume from './services/masterResume.json';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -57,9 +57,13 @@ const MODE_DESCRIPTIONS = {
 };
 
 const AUDIENCES = [
+  { id: 'cloud-architect', label: 'Cloud Architect', icon: '☁️' },
+  { id: 'cloud-ops', label: 'Cloud Ops Engineer', icon: '⚙️' },
+  { id: 'leadership', label: 'Leadership / Manager', icon: '👔' },
+  { id: 'solution-architect', label: 'Solution Architect', icon: '🏗️' },
+  { id: 'infra-engineer', label: 'Infra Engineer', icon: '🛠️' },
   { id: 'microsoft', label: 'Microsoft / Enterprise', icon: '🏢' },
   { id: 'startup', label: 'Startup / Agile', icon: '🚀' },
-  { id: 'executive', label: 'Executive / Leadership', icon: '👔' },
   { id: 'technical', label: 'Deep Technical / Engineering', icon: '💻' },
   { id: 'consulting', label: 'Consulting / Client-Facing', icon: '🤝' }
 ];
@@ -71,6 +75,7 @@ export default function App() {
   const [targetRole, setTargetRole] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
+  const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const { state: formattingState, dispatch: formattingDispatch } = useFormatting();
   const { activeSection, styles: sectionStyles } = formattingState;
@@ -98,6 +103,8 @@ export default function App() {
     localStorage.setItem('linkedInUrl', linkedInUrl);
   }, [linkedInUrl]);
 
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
   useEffect(() => {
     localStorage.setItem('linkedInPdfText', linkedInPdfText);
   }, [linkedInPdfText]);
@@ -105,6 +112,16 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('linkedInFileName', linkedInFileName);
   }, [linkedInFileName]);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (isDarkMode) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  }, [isDarkMode]);
 
   // Initial data load from masterResume
   useEffect(() => {
@@ -161,7 +178,6 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
-  const [isDarkMode, setIsDarkMode] = useState(true);
   const [showModeInfo, setShowModeInfo] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -441,7 +457,7 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
             model: engineConfig[selectedEngine].model,
             apiKey: engineConfig[selectedEngine].apiKey
           };
-          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig, linkedInUrl, linkedInPdfText, jobUrl, fastMode);
+          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig, linkedInUrl, linkedInPdfText, jobUrl, fastMode, recruiterSimulationMode);
           
           // Update token usage
           if (data._usage) {
@@ -915,28 +931,28 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
       </header>
 
       <div className="w-full max-w-7xl mx-auto px-4 py-4 md:py-8">
-        <div className="flex flex-col lg:flex-row gap-8 relative min-h-[calc(100vh-200px)]">
+        <div className="flex flex-col md:flex-row gap-8 relative min-h-[calc(100vh-200px)]">
           {/* Configuration Pane */}
           <div 
-            className={`w-full lg:flex-shrink-0 lg:h-screen lg:overflow-y-auto lg:sticky lg:top-20 custom-scrollbar`}
-            style={{ width: typeof window !== 'undefined' && window.innerWidth >= 1024 ? `${configWidth}px` : '100%' }}
+            className={`w-full md:flex-shrink-0 md:h-screen md:overflow-y-auto md:sticky md:top-20 custom-scrollbar`}
+            style={{ width: typeof window !== 'undefined' && window.innerWidth >= 768 ? `${configWidth}px` : '100%' }}
           >
             <div className="sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-4 border-b border-black/5 dark:border-white/10">
-              <div className="flex gap-1 p-1 bg-black/5 dark:bg-white/5 rounded-lg">
-                {(['config', 'style', 'tools'] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-md transition-all ${
-                      activeTab === tab
-                        ? (isDarkMode ? 'bg-white/10 text-white' : 'bg-white text-black shadow-sm')
-                        : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
-                    }`}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
+                    <div className="flex gap-1 p-1 bg-black/10 dark:bg-white/5 rounded-lg">
+                      {(['config', 'style', 'tools'] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          onClick={() => setActiveTab(tab)}
+                          className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-md transition-all ${
+                            activeTab === tab
+                              ? (isDarkMode ? 'bg-white/10 text-white' : 'bg-white text-black shadow-sm')
+                              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/60 hover:text-black')
+                          }`}
+                        >
+                          {tab}
+                        </button>
+                      ))}
+                    </div>
             </div>
             
             <div className="p-4 space-y-6">
@@ -959,7 +975,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     <div className="space-y-4">
                       {/* Target Role */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Target Role (Optional)</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Target Role (Optional)</label>
                         <div className="relative">
                           <Target className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-30`} />
                           <input 
@@ -975,7 +991,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                       {/* Audience Selection */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Target Audiences (Multi-select)</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Target Audiences (Multi-select)</label>
                         <div className="flex flex-wrap gap-2">
                           {AUDIENCES.map((audience) => (
                             <button
@@ -996,7 +1012,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       {/* Optimization Mode */}
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <label className={`block text-[10px] font-bold uppercase tracking-widest opacity-50`}>Optimization Mode</label>
+                          <label className={`block text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Optimization Mode</label>
                           <button 
                             onMouseEnter={() => setShowModeInfo(true)}
                             onMouseLeave={() => setShowModeInfo(false)}
@@ -1039,6 +1055,41 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             </button>
                           ))}
                         </div>
+                        
+                        <div className="mt-4 space-y-2">
+                          <button
+                            onClick={() => setRecruiterSimulationMode(!recruiterSimulationMode)}
+                            className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-between border transition-all ${
+                              recruiterSimulationMode
+                                ? (isDarkMode ? 'bg-red-500/20 border-red-500 text-red-200' : 'bg-red-50 border-red-500 text-red-800')
+                                : (isDarkMode ? 'bg-white/5 border-white/10 text-white/60' : 'bg-white border-black/5 text-black/60')
+                            }`}
+                          >
+                            Recruiter Simulation Mode
+                            <div className={`w-3 h-3 rounded-full ${recruiterSimulationMode ? 'bg-red-500' : 'bg-gray-400'}`} />
+                          </button>
+                          
+                          <button
+                            onClick={async () => {
+                              if (!jobDescription || !targetRole) {
+                                setError('Please provide both Job Description and Target Role.');
+                                return;
+                              }
+                              const currentEngineConfig = {
+                                engine: selectedEngine,
+                                model: engineConfig[selectedEngine].model,
+                                apiKey: engineConfig[selectedEngine].apiKey
+                              };
+                              const bestAudience = await analyzeBestAudience(jobDescription, targetRole, currentEngineConfig);
+                              setSelectedAudiences([bestAudience]);
+                            }}
+                            className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center border transition-all ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10' : 'bg-white border-black/5 text-black/60 hover:bg-black/5'
+                            }`}
+                          >
+                            Auto-select Audience
+                          </button>
+                        </div>
                         <label className="flex items-center gap-2 mt-4 cursor-pointer">
                           <input 
                             type="checkbox" 
@@ -1051,7 +1102,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                       {/* Resume Upload */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Current Resume (Optional)</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Current Resume (Optional)</label>
                         <div className={`relative border-2 border-dashed rounded-xl p-4 transition-all ${
                           isDarkMode ? 'bg-white/5 border-white/10 hover:border-emerald-500/50' : 'bg-[#F9F9F9] border-black/10 hover:border-emerald-500/50'
                         }`}>
@@ -1194,7 +1245,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                       {/* LinkedIn Profile */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>LinkedIn Profile (Optional)</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>LinkedIn Profile (Optional)</label>
                         <div className="space-y-3">
                           <div className="flex gap-2">
                             <input 
@@ -1249,7 +1300,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                       {/* Job Description */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Job Description</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Job Description</label>
                         <div className="space-y-3">
                           <div className="flex gap-2">
                             <input 
@@ -1369,7 +1420,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                 <div className="space-y-6">
                   {/* Resume Structure */}
                   <div>
-                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Resume Structure</label>
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Resume Structure</label>
                     <div className={`p-4 border rounded-xl ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-[#F9F9F9] border-black/5'}`}>
                       <DndContext
                         sensors={sensors}
@@ -1390,7 +1441,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
 
                   {/* Typography & Styling */}
                   <div>
-                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50`}>Typography & Styling</label>
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Typography & Styling</label>
                     <div className={`p-4 border rounded-xl space-y-4 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-[#F9F9F9] border-black/5'}`}>
                       
                       <div>
@@ -1628,7 +1679,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
         {/* Resize Handle */}
           <div 
             onMouseDown={handleMouseDown}
-            className={`hidden lg:block w-1 cursor-col-resize hover:bg-emerald-500/50 transition-colors self-stretch rounded-full mx-2 ${isResizing ? 'bg-emerald-500' : 'bg-white/10'}`}
+            className={`hidden md:block w-1 cursor-col-resize hover:bg-emerald-500/50 transition-colors self-stretch rounded-full mx-2 ${isResizing ? 'bg-emerald-500' : 'bg-white/10'}`}
           />
 
           {/* Result Section */}

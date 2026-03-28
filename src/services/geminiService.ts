@@ -26,6 +26,7 @@ export interface OptimizationResult {
   baseline_score: number;
   improvement_notes: string[];
   audience_alignment_notes: string;
+  rejection_reasons?: string[];
   _usage?: {
     promptTokenCount: number;
     candidatesTokenCount: number;
@@ -82,12 +83,14 @@ export async function optimizeResume(
   linkedInUrl?: string,
   linkedInPdfText?: string,
   jobUrl?: string,
-  fastMode: boolean = false
+  fastMode: boolean = false,
+  recruiterSimulationMode: boolean = false
 ): Promise<OptimizationResult> {
   const modelToUse = fastMode ? 'gemini-3-flash-preview' : config.model;
   const prompt = `
 ROLE:
 You are an expert Executive Resume Strategist and Technical Recruiter specializing in the Azure Cloud ecosystem for the 2026 job market.
+${recruiterSimulationMode ? 'You are acting as a strict Hiring Manager/Recruiter. Your goal is to critically evaluate the resume against the job description and provide specific, actionable rejection reasons.' : ''}
 
 CRITICAL CONTEXT:
 The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
@@ -99,10 +102,12 @@ IMPORTANT:
 * Do NOT include any formatting symbols, separators, or decorative elements
 * Output must be clean, concise, and spacing-friendly
 * The UI system will handle layout, alignment, and styling
+* ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
 
 TASK:
 Analyze and rewrite the resume for the candidate based on the provided input.
 Transform it into a high-impact, logically consistent, and ATS-optimized executive-level resume tailored for Azure Cloud roles.
+${recruiterSimulationMode ? 'Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
 
 CRITICAL ISSUES TO RESOLVE:
 1. FULL CAREER HISTORY:
@@ -141,6 +146,7 @@ ${jobUrl ? `JOB DESCRIPTION URL: ${jobUrl}` : ''}
 TARGET ROLE: ${targetRole}
 OPTIMIZATION MODE: ${mode}
 TARGET AUDIENCE: ${audience}
+RECRUITER SIMULATION MODE: ${recruiterSimulationMode}
 
 -----------------------------------
 ⚙️ PROCESSING STEPS
@@ -151,6 +157,7 @@ TARGET AUDIENCE: ${audience}
 4. Optimize all sections following the STRICT RULES above.
 5. Ensure ATS keyword density is improved naturally.
 6. Calculate approximate optimized match score (0–100).
+${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
 `;
 
   const maxRetries = 5;
@@ -216,7 +223,8 @@ TARGET AUDIENCE: ${audience}
                 match_score: { type: Type.NUMBER },
                 baseline_score: { type: Type.NUMBER },
                 improvement_notes: { type: Type.ARRAY, items: { type: Type.STRING } },
-                audience_alignment_notes: { type: Type.STRING }
+                audience_alignment_notes: { type: Type.STRING },
+                rejection_reasons: { type: Type.ARRAY, items: { type: Type.STRING } }
               },
               required: [
                 "summary", "skills", "experience", "certifications", "projects", "education",
@@ -362,6 +370,42 @@ export async function analyzeSkillGap(
   }
   
   throw new Error(`Unsupported engine: ${config.engine}`);
+}
+
+export async function analyzeBestAudience(
+  jobDescription: string,
+  targetRole: string,
+  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
+): Promise<string> {
+  const prompt = `
+    Analyze the following Job Description and Target Role.
+    Select the most appropriate audience from the following list:
+    - cloud-architect
+    - cloud-ops
+    - leadership
+    - solution-architect
+    - infra-engineer
+    - microsoft
+    - startup
+    - technical
+    - consulting
+    
+    Return ONLY the ID of the best matching audience.
+    
+    JOB DESCRIPTION: ${jobDescription}
+    TARGET ROLE: ${targetRole}
+  `;
+
+  if (config.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: config.model,
+      contents: prompt,
+    });
+    return response.text?.trim() || 'microsoft';
+  }
+  
+  return 'microsoft';
 }
 
 export async function generateInterviewQuestions(

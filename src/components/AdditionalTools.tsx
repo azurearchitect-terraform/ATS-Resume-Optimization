@@ -114,21 +114,33 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       <div className="flex flex-col sm:flex-row gap-2 mb-4">
         <button 
           onClick={() => setActiveTab('skillGap')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'skillGap' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'skillGap' 
+              ? 'bg-emerald-500 text-black' 
+              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+          }`}
         >
           <Zap className="w-4 h-4"/>
           Gap Analysis
         </button>
         <button 
           onClick={() => setActiveTab('interview')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'interview' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'interview' 
+              ? 'bg-emerald-500 text-black' 
+              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+          }`}
         >
           <Brain className="w-4 h-4"/>
           Interview
         </button>
         <button 
           onClick={() => setActiveTab('history')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${activeTab === 'history' ? 'bg-emerald-500 text-black' : 'hover:bg-white/5'}`}
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'history' 
+              ? 'bg-emerald-500 text-black' 
+              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+          }`}
         >
           <History className="w-4 h-4"/>
           Versions
@@ -212,7 +224,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           </button>
           <div className="space-y-2">
             {history.length === 0 ? (
-              <p className="text-center opacity-40 text-[10px] py-8">No saved versions yet.</p>
+              <p className={`text-center text-[10px] py-8 ${isDarkMode ? 'opacity-40' : 'opacity-60'}`}>No saved versions yet.</p>
             ) : (
               history.map((v) => (
                   <div key={v.id} className="group flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10 hover:border-emerald-500/30 transition-all">
@@ -229,7 +241,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                       ) : (
                         <>
                           <span className="text-[10px] font-bold truncate">{v.name || `Version ${new Date(v.timestamp).toLocaleString()}`}</span>
-                          <span className="text-[9px] opacity-50">{new Date(v.timestamp).toLocaleTimeString()}</span>
+                          <span className={`text-[9px] ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>{new Date(v.timestamp).toLocaleTimeString()}</span>
                         </>
                       )}
                     </div>
