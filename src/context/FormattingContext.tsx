@@ -5,7 +5,7 @@ export const DEFAULT_STYLE = {
   fontSize: 10.5,
   lineHeight: 1.5,
   letterSpacing: 0,
-  padding: 0,
+  padding: 8,
   margin: 24,
   color: '#1a1a1a',
 };
@@ -18,6 +18,7 @@ interface FormattingState {
 type FormattingAction =
   | { type: 'SET_ACTIVE_SECTION'; sectionId: string | null }
   | { type: 'UPDATE_STYLE'; sectionId: string; style: any }
+  | { type: 'SET_ALL_STYLES'; styles: Record<string, any> }
   | { type: 'RESET_STYLE'; sectionId: string | null };
 
 const initialState: FormattingState = {
@@ -36,6 +37,11 @@ function formattingReducer(state: FormattingState, action: FormattingAction): Fo
           ...state.styles,
           [action.sectionId]: { ...state.styles[action.sectionId], ...action.style },
         },
+      };
+    case 'SET_ALL_STYLES':
+      return {
+        ...state,
+        styles: action.styles,
       };
     case 'RESET_STYLE':
       if (action.sectionId) {

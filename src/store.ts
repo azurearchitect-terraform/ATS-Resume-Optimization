@@ -22,7 +22,7 @@ interface ResumeStore {
   toggleGrid: () => void;
   updateBlockPosition: (pageIndex: number, blockId: string, x: number, y: number) => void;
   setIsOptimizing: (val: boolean) => void;
-  setResults: (results: Record<string, OptimizationResult>) => void;
+  setResults: (results: Record<string, OptimizationResult> | ((prev: Record<string, OptimizationResult>) => Record<string, OptimizationResult>)) => void;
   setActiveAudience: (audience: string | null) => void;
   setCurrentOptimizingEngine: (engine: string | null) => void;
 }
@@ -80,7 +80,9 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
   },
 
   setIsOptimizing: (val) => set({ isOptimizing: val }),
-  setResults: (results) => set({ results }),
+  setResults: (results) => set((state) => ({ 
+    results: typeof results === 'function' ? results(state.results) : results 
+  })),
   setActiveAudience: (activeAudience) => set({ activeAudience }),
   setCurrentOptimizingEngine: (currentOptimizingEngine) => set({ currentOptimizingEngine }),
 }));

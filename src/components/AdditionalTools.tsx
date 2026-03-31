@@ -45,9 +45,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(true);
     try {
       const result = await analyzeSkillGap(resumeText, jobDescription, {
-        engine: selectedEngine,
-        model: engineConfig[selectedEngine].model,
-        apiKey: engineConfig[selectedEngine].apiKey
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
       });
       setSkillGap(result);
     } catch (e: any) {
@@ -66,9 +74,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(true);
     try {
       const result = await generateInterviewQuestions(jobDescription, resumeText, {
-        engine: selectedEngine,
-        model: engineConfig[selectedEngine].model,
-        apiKey: engineConfig[selectedEngine].apiKey
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
       });
       setInterviewQuestions(result);
     } catch (e: any) {

@@ -28,60 +28,187 @@
     background: rgba(16, 185, 129, 0.4);
   }
 
-  /* Force standard colors for PDF generation to avoid html2canvas oklab/oklch errors */
+  /* Force standard colors for PDF generation to avoid html2canvas oklab/oklch and color-mix errors */
   .legacy-colors {
-    background-color: #FFFFFF !important;
-    color: #000000 !important;
+    color: #1a1a1a; /* Explicitly set to prevent inheriting oklch from body */
+    background-color: #ffffff;
+    
+    --color-emerald-50: #ecfdf5;
+    --color-emerald-100: #d1fae5;
+    --color-emerald-200: #a7f3d0;
+    --color-emerald-300: #6ee7b7;
+    --color-emerald-400: #34d399;
+    --color-emerald-500: #10b981;
+    --color-emerald-600: #059669;
+    --color-emerald-700: #047857;
+    --color-emerald-800: #065f46;
+    --color-emerald-900: #064e3b;
+    
+    --color-gray-50: #f9fafb;
+    --color-gray-100: #f3f4f6;
+    --color-gray-200: #e5e7eb;
+    --color-gray-300: #d1d5db;
+    --color-gray-400: #9ca3af;
+    --color-gray-500: #6b7280;
+    --color-gray-600: #4b5563;
+    --color-gray-700: #374151;
+    --color-gray-800: #1f2937;
+    --color-gray-900: #111827;
+    --color-gray-950: #030712;
+
+    --color-red-50: #fef2f2;
+    --color-red-100: #fee2e2;
+    --color-red-200: #fecaca;
+    --color-red-300: #fca5a5;
+    --color-red-400: #f87171;
+    --color-red-500: #ef4444;
+    --color-red-600: #dc2626;
+    --color-red-700: #b91c1c;
+    --color-red-800: #991b1b;
+    --color-red-900: #7f1d1d;
+
+    --color-orange-50: #fff7ed;
+    --color-orange-100: #ffedd5;
+    --color-orange-200: #fed7aa;
+    --color-orange-300: #fdba74;
+    --color-orange-400: #fb923c;
+    --color-orange-500: #f97316;
+    --color-orange-600: #ea580c;
+    --color-orange-700: #c2410c;
+    --color-orange-800: #9a3412;
+    --color-orange-900: #7c2d12;
+
+    --color-yellow-50: #fefce8;
+    --color-yellow-100: #fef9c3;
+    --color-yellow-200: #fef08a;
+    --color-yellow-300: #fde047;
+    --color-yellow-400: #facc15;
+    --color-yellow-500: #eab308;
+    --color-yellow-600: #ca8a04;
+    --color-yellow-700: #a16207;
+    --color-yellow-800: #854d0e;
+    --color-yellow-900: #713f12;
+
+    --color-blue-50: #eff6ff;
+    --color-blue-100: #dbeafe;
+    --color-blue-200: #bfdbfe;
+    --color-blue-300: #93c5fd;
+    --color-blue-400: #60a5fa;
+    --color-blue-500: #3b82f6;
+    --color-blue-600: #2563eb;
+    --color-blue-700: #1d4ed8;
+    --color-blue-800: #1e40af;
+    --color-blue-900: #1e3a8a;
+
+    --color-amber-50: #fffbeb;
+    --color-amber-100: #fef3c7;
+    --color-amber-200: #fde68a;
+    --color-amber-300: #fcd34d;
+    --color-amber-400: #fbbf24;
+    --color-amber-500: #f59e0b;
+    --color-amber-600: #d97706;
+    --color-amber-700: #b45309;
+    --color-amber-800: #92400e;
+    --color-amber-900: #78350f;
+
+    --color-green-50: #f0fdf4;
+    --color-green-100: #dcfce7;
+    --color-green-200: #bbf7d0;
+    --color-green-300: #86efac;
+    --color-green-400: #4ade80;
+    --color-green-500: #22c55e;
+    --color-green-600: #16a34a;
+    --color-green-700: #15803d;
+    --color-green-800: #166534;
+    --color-green-900: #14532d;
+    
+    --color-black: #000000;
+    --color-white: #ffffff;
+    --color-transparent: transparent;
   }
 
-  .legacy-colors * {
-    border-color: #E5E7EB !important;
-    color: inherit !important;
-    box-shadow: none !important;
-    text-shadow: none !important;
-  }
+  /* Override color-mix usages since html2canvas doesn't support it */
+  .legacy-colors .bg-emerald-50\/50 { background-color: rgba(236, 253, 245, 0.5) !important; }
+  .legacy-colors .bg-emerald-500\/10 { background-color: rgba(16, 185, 129, 0.1) !important; }
+  .legacy-colors .bg-emerald-500\/20 { background-color: rgba(16, 185, 129, 0.2) !important; }
+  .legacy-colors .bg-emerald-500\/30 { background-color: rgba(16, 185, 129, 0.3) !important; }
+  .legacy-colors .bg-emerald-500\/50 { background-color: rgba(16, 185, 129, 0.5) !important; }
+  .legacy-colors .border-emerald-500\/20 { border-color: rgba(16, 185, 129, 0.2) !important; }
+  .legacy-colors .border-emerald-500\/50 { border-color: rgba(16, 185, 129, 0.5) !important; }
 
-  /* Specific overrides for common elements in the PDF */
-  .legacy-colors .bg-emerald-500,
-  .legacy-colors .bg-emerald-700 {
-    background-color: #059669 !important;
-  }
-  
-  .legacy-colors .text-emerald-700 {
-    color: #047857 !important;
-  }
+  .legacy-colors .bg-red-500\/10 { background-color: rgba(239, 68, 68, 0.1) !important; }
+  .legacy-colors .bg-red-500\/20 { background-color: rgba(239, 68, 68, 0.2) !important; }
+  .legacy-colors .bg-red-500\/50 { background-color: rgba(239, 68, 68, 0.5) !important; }
+  .legacy-colors .border-red-500\/20 { border-color: rgba(239, 68, 68, 0.2) !important; }
 
-  .legacy-colors .bg-black\/40,
-  .legacy-colors .bg-black\/60,
-  .legacy-colors .bg-black {
-    background-color: #000000 !important;
-  }
+  .legacy-colors .bg-orange-500\/10 { background-color: rgba(249, 115, 22, 0.1) !important; }
+  .legacy-colors .border-orange-500\/20 { border-color: rgba(249, 115, 22, 0.2) !important; }
 
-  /* Professional Bullet Point Alignment - Absolute positioning is more robust for html2canvas than flexbox */
+  .legacy-colors .bg-yellow-500\/10 { background-color: rgba(234, 179, 8, 0.1) !important; }
+  .legacy-colors .bg-yellow-500\/50 { background-color: rgba(234, 179, 8, 0.5) !important; }
+
+  .legacy-colors .bg-green-500\/50 { background-color: rgba(34, 197, 94, 0.5) !important; }
+
+  .legacy-colors .bg-amber-500\/10 { background-color: rgba(245, 158, 11, 0.1) !important; }
+  .legacy-colors .border-amber-500\/20 { border-color: rgba(245, 158, 11, 0.2) !important; }
+
+  .legacy-colors .bg-gray-200\/50 { background-color: rgba(229, 231, 235, 0.5) !important; }
+
+  .legacy-colors .text-white\/40 { color: rgba(255, 255, 255, 0.4) !important; }
+  .legacy-colors .text-white\/60 { color: rgba(255, 255, 255, 0.6) !important; }
+  .legacy-colors .text-white\/30 { color: rgba(255, 255, 255, 0.3) !important; }
+  .legacy-colors .text-black\/40 { color: rgba(0, 0, 0, 0.4) !important; }
+  .legacy-colors .text-black\/60 { color: rgba(0, 0, 0, 0.6) !important; }
+  .legacy-colors .text-black\/30 { color: rgba(0, 0, 0, 0.3) !important; }
+
+  .legacy-colors .bg-black\/5 { background-color: rgba(0, 0, 0, 0.05) !important; }
+  .legacy-colors .bg-black\/10 { background-color: rgba(0, 0, 0, 0.1) !important; }
+  .legacy-colors .bg-black\/20 { background-color: rgba(0, 0, 0, 0.2) !important; }
+  .legacy-colors .bg-white\/5 { background-color: rgba(255, 255, 255, 0.05) !important; }
+  .legacy-colors .bg-white\/10 { background-color: rgba(255, 255, 255, 0.1) !important; }
+  .legacy-colors .bg-white\/80 { background-color: rgba(255, 255, 255, 0.8) !important; }
+
+  .legacy-colors .border-black\/5 { border-color: rgba(0, 0, 0, 0.05) !important; }
+  .legacy-colors .border-black\/10 { border-color: rgba(0, 0, 0, 0.1) !important; }
+  .legacy-colors .border-black\/20 { border-color: rgba(0, 0, 0, 0.2) !important; }
+  .legacy-colors .border-black\/30 { border-color: rgba(0, 0, 0, 0.3) !important; }
+  .legacy-colors .border-white\/5 { border-color: rgba(255, 255, 255, 0.05) !important; }
+  .legacy-colors .border-white\/10 { border-color: rgba(255, 255, 255, 0.1) !important; }
+  .legacy-colors .border-white\/30 { border-color: rgba(255, 255, 255, 0.3) !important; }
+
+  /* Professional Bullet Point Alignment - Using semantic ul/li as requested */
+  /* Professional Bullet Point Alignment */
   .resume-bullet-item {
-    position: relative;
-    padding-left: 16px; /* Increased space for better visual separation */
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
     margin-bottom: 4px;
-    width: 100%;
-    text-align: left;
-    line-height: 1.5; /* Improved line height for readability */
   }
 
   .resume-bullet-dot {
-    position: absolute;
-    left: 4px;
-    top: 13px; /* Adjusted for better alignment with text baseline */
     width: 4px;
     height: 4px;
-    background-color: currentColor;
+    min-width: 4px;
+    background-color: #000000;
     border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 6px; /* Align with first line of text */
   }
 
   .resume-bullet-text {
-    display: block;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    font-size: inherit;
+    flex: 1;
+  }
+
+  .resume-list {
+    list-style-type: disc;
+    padding-left: 18px;
+    margin: 0;
+  }
+
+  .resume-list li {
+    margin-bottom: 6px;
+    line-height: 1.6;
+    text-align: left;
   }
 
   /* Page margins and typography system */
@@ -91,18 +218,15 @@
     min-height: 297mm;
     height: auto;
     background-color: white;
-    padding: 20mm 15mm 20mm 15mm; /* Increased top padding */
+    padding: 15mm;
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
     position: relative;
-    overflow: hidden;
     color: #1A1A1A;
   }
 
   .resume-section {
-    break-inside: avoid;
-    page-break-inside: avoid;
     position: relative;
     width: 100%;
   }

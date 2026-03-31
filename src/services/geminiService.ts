@@ -1,14 +1,15 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
+import { jsonrepair } from "jsonrepair";
+import { routeTask, RouterConfig } from "./aiRouter";
 
 export interface OptimizationResult {
   summary: string;
   skills: {
-    infrastructure: string[];
-    devsecops: string[];
-    governance: string[];
-    observability: string[];
+    Infrastructure: string[];
+    DevSecOps: string[];
+    Governance: string[];
+    Observability: string[];
   };
   experience: {
     role: string;
@@ -34,7 +35,7 @@ export interface OptimizationResult {
   };
 }
 
-export type EngineType = 'gemini' | 'openai' | 'anthropic';
+export type EngineType = 'gemini' | 'openai';
 
 export interface EngineConfig {
   engine: EngineType;
@@ -42,11 +43,43 @@ export interface EngineConfig {
   apiKey?: string;
 }
 
-export async function fetchJobDescription(url: string, config: EngineConfig): Promise<string> {
-  if (config.engine !== 'gemini') {
-    throw new Error("URL fetching is currently only supported with the Gemini engine.");
+function extractJson(text: string): string {
+  if (!text) return "";
+  
+  // Try to find JSON block in markdown
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
+  let extracted = text;
+  if (jsonMatch && jsonMatch[1]) {
+    extracted = jsonMatch[1].trim();
+  } else {
+    const firstBrace = text.indexOf('{');
+    const firstBracket = text.indexOf('[');
+
+    if (firstBrace !== -1 && firstBracket !== -1) {
+      if (firstBrace < firstBracket) {
+        extracted = text.substring(firstBrace).trim();
+      } else {
+        extracted = text.substring(firstBracket).trim();
+      }
+    } else if (firstBrace !== -1) {
+      extracted = text.substring(firstBrace).trim();
+    } else if (firstBracket !== -1) {
+      extracted = text.substring(firstBracket).trim();
+    } else {
+      extracted = text.trim();
+    }
   }
 
+  try {
+    return jsonrepair(extracted);
+  } catch (e) {
+    console.error("Failed to repair JSON:", e);
+    return extracted;
+  }
+}
+
+export async function fetchJobDescription(url: string, config: RouterConfig): Promise<string> {
+  const routedConfig = routeTask('extract_job_description', config);
   const prompt = `
 You are an expert recruiter and data extractor.
 Please read the following job posting URL and extract the full job description text.
@@ -57,16 +90,31 @@ JOB URL: ${url}
 `;
 
   try {
-    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
-    const response = await ai.models.generateContent({
-      model: config.model,
-      contents: prompt,
-      config: {
-        tools: [{ urlContext: {} }],
+    if (routedConfig.engine === 'openai') {
+      const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        throw new Error("OpenAI API Key is missing.");
       }
-    });
-    
-    return response.text || "";
+      const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+      const response = await openai.chat.completions.create({
+        model: routedConfig.model,
+        messages: [
+          { role: "system", content: "You are a professional job description extractor." },
+          { role: "user", content: prompt }
+        ]
+      });
+      return response.choices[0].message.content || "";
+    } else {
+      const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
+      const response = await ai.models.generateContent({
+        model: routedConfig.model,
+        contents: prompt,
+        config: {
+          tools: [{ urlContext: {} }],
+        }
+      });
+      return response.text || "";
+    }
   } catch (error) {
     console.error("Error fetching job description:", error);
     throw error;
@@ -79,41 +127,55 @@ export async function optimizeResume(
   targetRole: string,
   mode: "conservative" | "balanced" | "aggressive",
   audience: string,
-  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' },
+  config: RouterConfig,
   linkedInUrl?: string,
   linkedInPdfText?: string,
   jobUrl?: string,
   fastMode: boolean = false,
   recruiterSimulationMode: boolean = false
 ): Promise<OptimizationResult> {
-  const modelToUse = fastMode ? 'gemini-3-flash-preview' : config.model;
+  const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
+  const modelToUse = fastMode ? (routedConfig.engine === 'openai' ? 'gpt-5.4-mini' : 'gemini-3-flash-preview') : routedConfig.model;
   const prompt = `
 ROLE:
-You are an expert Executive Resume Strategist and Technical Recruiter specializing in the Azure Cloud ecosystem for the 2026 job market.
+You are a senior executive resume strategist.
 ${recruiterSimulationMode ? 'You are acting as a strict Hiring Manager/Recruiter. Your goal is to critically evaluate the resume against the job description and provide specific, actionable rejection reasons.' : ''}
 
-CRITICAL CONTEXT:
-The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
-The system supports EXACTLY 2 pages maximum.
-You must generate structured, layout-safe content that fits within these constraints.
-
-IMPORTANT:
-* Do NOT generate long paragraphs
-* Do NOT include any formatting symbols, separators, or decorative elements
-* Output must be clean, concise, and spacing-friendly
-* The UI system will handle layout, alignment, and styling
-* ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
+STRICT RULES:
+* Resume must fit within EXACTLY 2 A4 pages
+* Do NOT exceed 2 pages
+* Do NOT leave large empty spaces
+* Use compact but powerful bullet points
+* Maintain consistent spacing and alignment
+* Ensure no text is cut from left or right margins
 
 TASK:
-Analyze and rewrite the resume for the candidate based on the provided input.
-Transform it into a high-impact, logically consistent, and ATS-optimized executive-level resume tailored for Azure Cloud roles.
-${recruiterSimulationMode ? 'Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
+1. Rewrite the summary (minimum 4–5 strong lines)
+2. Optimize experience with impactful bullet points
+3. Balance content across 2 pages
+4. Ensure proper section distribution
+${recruiterSimulationMode ? '5. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
+
+FORMAT:
+* Clean professional formatting
+* Bullet points concise but strong
+* No unnecessary spacing
+* No explanations, only final resume
+
+IMPORTANT:
+The output must be layout-aware and ready for A4 PDF rendering.
+The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
+You must generate structured, layout-safe content that fits within these constraints.
+* ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
+* TARGET: Achieve at least an 80% optimization score by maximizing keyword alignment and impact metrics.
+* Ensure every bullet point starts with a strong action verb and includes a measurable result if possible.
 
 CRITICAL ISSUES TO RESOLVE:
 1. FULL CAREER HISTORY:
 * Include ALL roles from the input resume in the experience section.
 * Do NOT summarize older roles into a separate section.
 * Every role must have at least 3 high-impact bullet points.
+* Include quantifiable metrics (e.g., %, $, time saved) naturally where they make sense, but do not force them into every bullet to keep it looking normal.
 
 2. EDUCATION PARADOX:
 * The candidate is completing BCA in 2027 despite senior experience.
@@ -129,10 +191,14 @@ CRITICAL ISSUES TO RESOLVE:
 * Skills must be grouped logically for grid display: Infrastructure, DevSecOps, Governance, Observability.
 * Keep skills short (1–3 words).
 
+5. SPECIFIC USER CONSTRAINTS:
+* The candidate has very little to no experience with CI/CD, Terraform, and DevOps.
+* Do NOT focus heavily on these areas. Only include basic knowledge if absolutely necessary, but do not exaggerate or invent experience in these domains.
+
 LAYOUT-SAFE CONTENT RULES (MANDATORY):
-- SUMMARY: Max 60 words, leadership-focused.
+- SUMMARY: Minimum 4-5 strong lines, leadership-focused.
 - SKILLS: Max 12–15 items total across categories.
-- EXPERIENCE: Include ALL roles from the input. For the first role, provide at least 7 bullets. For the second, at least 6. For the third and fourth, at least 5. For all other roles, provide at least 3 bullets. Each bullet max 12 words. Focus on impact.
+- EXPERIENCE: Include ALL roles from the input. For the first role, provide at least 7 bullets. For the second, at least 6. For the third and fourth, at least 5. For all other roles, provide at least 3 bullets. Each bullet max 12 words. Focus on impact. Use quantifiable metrics (e.g., %) only when appropriate and realistic, avoiding an unnatural overload of numbers.
 - CERTIFICATIONS: Max 4 items.
 - PROJECTS: Max 2 high-impact technical projects. Use the projects from the Master Resume as the source. For each project, generate a concise and impactful 1-2 sentence description if the input is brief or missing. Focus on quantifiable achievements (e.g., "Reduced latency by 40%") and technical details (e.g., "using Azure Kubernetes Service and Terraform") relevant to a Cloud & Collaboration Engineer role. Provide a title and the description.
 - EDUCATION: Properly reframed.
@@ -162,20 +228,25 @@ ${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume
 
   const maxRetries = 5;
   let retryCount = 0;
-  let currentModel = config.model;
+  let currentModel = modelToUse;
 
   while (retryCount <= maxRetries) {
     try {
       let resultText = "";
 
-      if (config.engine === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+      if (routedConfig.engine === 'gemini') {
+        const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
+        const tools = [];
+        if (jobUrl || linkedInUrl) {
+          tools.push({ urlContext: {} });
+        }
+
         const response = await ai.models.generateContent({
-          model: modelToUse,
+          model: currentModel,
           contents: prompt,
           config: {
-            tools: [{ urlContext: {} }],
-            maxOutputTokens: 16384,
+            maxOutputTokens: 8192,
+            tools: tools.length > 0 ? tools : undefined,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -234,9 +305,15 @@ ${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume
             }
           }
         });
-        resultText = response.text || "";
+        
+        resultText = extractJson(response.text || "");
         const usage = response.usageMetadata;
         
+        if (!resultText) {
+          console.error("Empty response from Gemini");
+          throw new Error("The AI returned an empty response. Please try again.");
+        }
+
         try {
           const parsed = JSON.parse(resultText);
           if (usage) {
@@ -248,58 +325,56 @@ ${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume
           }
           return parsed;
         } catch (e) {
-          console.error("Error parsing AI response:", e);
-          throw new Error("The AI returned an invalid response format. Please try again.");
+          console.error("Error parsing Gemini response:", e, "Raw text:", resultText);
+          throw new Error("JSON_PARSING_ERROR: The AI returned an invalid response format.");
         }
-      } else if (config.engine === 'openai') {
-        const openai = new OpenAI({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+      } else if (routedConfig.engine === 'openai') {
+        const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+          throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
+        }
+        const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
         const response = await openai.chat.completions.create({
-          model: config.model,
+          model: currentModel,
           messages: [
             { role: "system", content: "You are a professional resume optimization engine. Return ONLY valid JSON." },
-            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: { Infrastructure: string[], DevSecOps: string[], Governance: string[], Observability: string[] }, experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: { degree: string, institution: string, expected_completion: string }[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string }" }
+            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: { Infrastructure: string[], DevSecOps: string[], Governance: string[], Observability: string[] }, experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: string[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string, rejection_reasons: string[] }" }
           ],
           response_format: { type: "json_object" }
         });
-        resultText = response.choices[0].message.content || "";
-      } else if (config.engine === 'anthropic') {
-        const anthropic = new Anthropic({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
-        const response = await anthropic.messages.create({
-          model: config.model,
-          max_tokens: 8192,
-          messages: [
-            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: { Infrastructure: string[], DevSecOps: string[], Governance: string[], Observability: string[] }, experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: { degree: string, institution: string, expected_completion: string }[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string }" }
-          ]
-        });
-        // Anthropic might return text with markdown blocks
-        const text = (response.content[0] as any).text || "";
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        resultText = jsonMatch ? jsonMatch[0] : text;
+        resultText = extractJson(response.choices[0].message.content || "");
       }
 
       if (!resultText) {
-        throw new Error(`No response from ${config.engine}`);
+        throw new Error(`No response from ${routedConfig.engine}`);
       }
 
-      return JSON.parse(resultText);
+      try {
+        return JSON.parse(resultText);
+      } catch (e) {
+        console.error(`Error parsing ${routedConfig.engine} response:`, e, "Raw text:", resultText);
+        throw new Error(`JSON_PARSING_ERROR: The ${routedConfig.engine} engine returned an invalid response format.`);
+      }
     } catch (error: any) {
       const errorString = error?.message || String(error);
       const isRateLimit = errorString.includes("429") || 
                          errorString.includes("RESOURCE_EXHAUSTED") ||
                          errorString.includes("quota") ||
                          errorString.includes("rate limit");
+      const isJsonError = errorString.includes("JSON_PARSING_ERROR") || 
+                          errorString.includes("invalid response format");
       
-      if (isRateLimit && retryCount < maxRetries) {
+      if ((isRateLimit || isJsonError) && retryCount < maxRetries) {
         retryCount++;
         
-        // Fallback to Flash if Pro fails with rate limit
-        if (config.engine === 'gemini' && currentModel.includes('pro')) {
-          console.warn(`Rate limit hit on Gemini Pro. Falling back to Gemini Flash for retry ${retryCount}...`);
+        // Fallback to Flash if Pro fails with rate limit or JSON error
+        if (routedConfig.engine === 'gemini' && currentModel.includes('pro')) {
+          console.warn(`Error hit on Gemini Pro. Falling back to Gemini Flash for retry ${retryCount}...`);
           currentModel = 'gemini-3-flash-preview';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
-        console.warn(`Rate limit hit on ${config.engine}. Retrying in ${Math.round(delay)}ms... (Attempt ${retryCount}/${maxRetries})`);
+        console.warn(`Error hit on ${routedConfig.engine} (${isRateLimit ? 'Rate Limit' : 'JSON Error'}). Retrying in ${Math.round(delay)}ms... (Attempt ${retryCount}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -308,15 +383,15 @@ ${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume
     }
   }
 
-// ... existing code ...
-  throw new Error(`Maximum retries exceeded for ${config.engine}. Please try again in a few minutes.`);
+  throw new Error(`Maximum retries exceeded for ${routedConfig.engine}. Please try again in a few minutes.`);
 }
 
 export async function analyzeSkillGap(
   resumeText: string,
   jobDescription: string,
-  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
+  config: RouterConfig
 ): Promise<{ missing: string[], present: string[] }> {
+  const routedConfig = routeTask('extract_skills', config);
   const prompt = `
       Analyze the following resume and job description.
       Identify the skills present in the resume and the skills required by the job description that are missing from the resume.
@@ -326,12 +401,18 @@ export async function analyzeSkillGap(
       JOB DESCRIPTION: ${jobDescription}
     `;
 
-  if (config.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+  if (routedConfig.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
+    const tools = [];
+    if (jobDescription.startsWith('http') || resumeText.startsWith('http')) {
+      tools.push({ urlContext: {} });
+    }
+
     const response = await ai.models.generateContent({
-      model: config.model,
+      model: routedConfig.model,
       contents: prompt,
       config: {
+        tools: tools.length > 0 ? tools : undefined,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -343,43 +424,39 @@ export async function analyzeSkillGap(
         }
       }
     });
-    return JSON.parse(response.text || '{"missing":[], "present":[]}');
-  } else if (config.engine === 'openai') {
-    const openai = new OpenAI({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+    const resultText = extractJson(response.text || "");
+    return JSON.parse(resultText || '{"missing":[], "present":[]}');
+  } else if (routedConfig.engine === 'openai') {
+    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
+    }
+    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
     const response = await openai.chat.completions.create({
-      model: config.model,
+      model: routedConfig.model,
       messages: [
         { role: "system", content: "You are a professional resume analyzer. Return ONLY valid JSON." },
         { role: "user", content: prompt }
       ],
       response_format: { type: "json_object" }
     });
-    return JSON.parse(response.choices[0].message.content || '{"missing":[], "present":[]}');
-  } else if (config.engine === 'anthropic') {
-    const anthropic = new Anthropic({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
-    const response = await anthropic.messages.create({
-      model: config.model,
-      max_tokens: 4096,
-      messages: [
-        { role: "user", content: prompt + "\n\nReturn ONLY the JSON object." }
-      ]
-    });
-    const text = (response.content[0] as any).text || "";
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return JSON.parse(jsonMatch ? jsonMatch[0] : text || '{"missing":[], "present":[]}');
+    const resultText = extractJson(response.choices[0].message.content || "");
+    return JSON.parse(resultText || '{"missing":[], "present":[]}');
   }
   
-  throw new Error(`Unsupported engine: ${config.engine}`);
+  throw new Error(`Unsupported engine: ${routedConfig.engine}`);
 }
 
-export async function analyzeBestAudience(
+export async function analyzeBestAudiences(
   jobDescription: string,
   targetRole: string,
-  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
-): Promise<string> {
+  config: RouterConfig
+): Promise<string[]> {
+  const routedConfig = routeTask('multi_audience', config);
+  console.log('analyzeBestAudiences called', { jobDescription, targetRole });
   const prompt = `
     Analyze the following Job Description and Target Role.
-    Select the most appropriate audience from the following list:
+    Select the most appropriate audiences from the following list:
     - cloud-architect
     - cloud-ops
     - leadership
@@ -390,29 +467,69 @@ export async function analyzeBestAudience(
     - technical
     - consulting
     
-    Return ONLY the ID of the best matching audience.
+    Return ONLY a JSON array of the IDs of the best matching audiences. Example: ["cloud-architect", "leadership"]
     
     JOB DESCRIPTION: ${jobDescription}
     TARGET ROLE: ${targetRole}
   `;
 
-  if (config.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+  if (routedConfig.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
+    const tools = [];
+    if (jobDescription.startsWith('http')) {
+      tools.push({ urlContext: {} });
+    }
+
     const response = await ai.models.generateContent({
-      model: config.model,
+      model: routedConfig.model,
       contents: prompt,
+      config: {
+        tools: tools.length > 0 ? tools : undefined,
+        responseMimeType: "application/json",
+      }
     });
-    return response.text?.trim() || 'microsoft';
+    try {
+      const text = extractJson(response.text || "");
+      if (!text) return ['microsoft'];
+      const parsed = JSON.parse(text);
+      return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
+    } catch (e) {
+      console.error('Error parsing audiences from Gemini:', e);
+      return ['microsoft'];
+    }
+  } else if (routedConfig.engine === 'openai') {
+    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) return ['microsoft'];
+    
+    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+    const response = await openai.chat.completions.create({
+      model: routedConfig.model,
+      messages: [
+        { role: "system", content: "You are a professional resume analyzer. Return ONLY valid JSON array of audience IDs." },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
+    });
+    try {
+      const content = extractJson(response.choices[0].message.content || "");
+      if (!content) return ['microsoft'];
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
+    } catch (e) {
+      console.error('Error parsing audiences from OpenAI:', e);
+      return ['microsoft'];
+    }
   }
   
-  return 'microsoft';
+  return ['microsoft'];
 }
 
 export async function generateInterviewQuestions(
   jobDescription: string,
   resumeText: string,
-  config: EngineConfig = { engine: 'gemini', model: 'gemini-3.1-pro-preview' }
+  config: RouterConfig
 ): Promise<string[]> {
+  const routedConfig = routeTask('interview_questions', config);
   const prompt = `
       Based on the following job description and the candidate's resume, generate 5-10 potential interview questions.
       Return the result as a JSON array of strings: [ "question1", "question2", ... ]
@@ -421,12 +538,18 @@ export async function generateInterviewQuestions(
       RESUME: ${resumeText}
     `;
 
-  if (config.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: config.apiKey || process.env.GEMINI_API_KEY || "" });
+  if (routedConfig.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
+    const tools = [];
+    if (jobDescription.startsWith('http') || resumeText.startsWith('http')) {
+      tools.push({ urlContext: {} });
+    }
+
     const response = await ai.models.generateContent({
-      model: config.model,
+      model: routedConfig.model,
       contents: prompt,
       config: {
+        tools: tools.length > 0 ? tools : undefined,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -434,32 +557,26 @@ export async function generateInterviewQuestions(
         }
       }
     });
-    return JSON.parse(response.text || '[]');
-  } else if (config.engine === 'openai') {
-    const openai = new OpenAI({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
+    const resultText = extractJson(response.text || "");
+    return JSON.parse(resultText || '[]');
+  } else if (routedConfig.engine === 'openai') {
+    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
+    }
+    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
     const response = await openai.chat.completions.create({
-      model: config.model,
+      model: routedConfig.model,
       messages: [
         { role: "system", content: "You are a professional interview coach. Return ONLY valid JSON array of strings." },
         { role: "user", content: prompt }
       ],
       response_format: { type: "json_object" }
     });
-    const parsed = JSON.parse(response.choices[0].message.content || '{}');
+    const resultText = extractJson(response.choices[0].message.content || "");
+    const parsed = JSON.parse(resultText || '{}');
     return Array.isArray(parsed) ? parsed : (parsed.questions || []);
-  } else if (config.engine === 'anthropic') {
-    const anthropic = new Anthropic({ apiKey: config.apiKey || "", dangerouslyAllowBrowser: true });
-    const response = await anthropic.messages.create({
-      model: config.model,
-      max_tokens: 4096,
-      messages: [
-        { role: "user", content: prompt + "\n\nReturn ONLY the JSON array." }
-      ]
-    });
-    const text = (response.content[0] as any).text || "";
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    return JSON.parse(jsonMatch ? jsonMatch[0] : text || '[]');
   }
 
-  throw new Error(`Unsupported engine: ${config.engine}`);
+  throw new Error(`Unsupported engine: ${routedConfig.engine}`);
 }

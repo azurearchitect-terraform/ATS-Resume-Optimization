@@ -28,7 +28,8 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  AlignJustify
+  AlignJustify,
+  Building
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -38,12 +39,11 @@ import { AdditionalTools } from './components/AdditionalTools';
 import { useResumeStore } from './store';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudience, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeBestAudiences, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
+import { RouterConfig } from './services/aiRouter';
 import masterResume from './services/masterResume.json';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
 
 // Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -68,15 +68,51 @@ const AUDIENCES = [
   { id: 'consulting', label: 'Consulting / Client-Facing', icon: '🤝' }
 ];
 
+const MODEL_PRICING: Record<string, { input: number, output: number }> = {
+  // OpenAI
+  'gpt-5.4': { input: 5.00, output: 15.00 },
+  'gpt-5.4-mini': { input: 0.15, output: 0.60 },
+  'gpt-5.4-nano': { input: 0.05, output: 0.20 },
+  'o1': { input: 15.00, output: 60.00 },
+  'o3-mini': { input: 1.10, output: 4.40 },
+  'gpt-4.5': { input: 75.00, output: 150.00 },
+  'gpt-4o': { input: 2.50, output: 10.00 },
+  'gpt-4o-mini': { input: 0.15, output: 0.60 },
+  // Gemini
+  'gemini-3.1-pro-preview': { input: 1.25, output: 5.00 },
+  'gemini-3-flash-preview': { input: 0.075, output: 0.30 },
+};
+
 export default function App() {
-  const [resumeText, setResumeText] = useState('');
+  const [resumeText, setResumeText] = useState(() => localStorage.getItem('resumeText') || '');
   const [jobDescription, setJobDescription] = useState('');
   const [activeTab, setActiveTab] = useState<'config' | 'style' | 'tools'>('config');
   const [targetRole, setTargetRole] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
   const [fastMode, setFastMode] = useState(false);
   const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
+  const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
+  const audienceDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (audienceDropdownRef.current && !audienceDropdownRef.current.contains(event.target as Node)) {
+        setIsAudienceDropdownOpen(false);
+      }
+    };
+
+    if (isAudienceDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAudienceDropdownOpen]);
   const { state: formattingState, dispatch: formattingDispatch } = useFormatting();
   const { activeSection, styles: sectionStyles } = formattingState;
   const { 
@@ -98,6 +134,10 @@ export default function App() {
   const [jobUrl, setJobUrl] = useState('');
   const [isExtractingLinkedIn, setIsExtractingLinkedIn] = useState(false);
   const [isFetchingJob, setIsFetchingJob] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('resumeText', resumeText);
+  }, [resumeText]);
 
   useEffect(() => {
     localStorage.setItem('linkedInUrl', linkedInUrl);
@@ -166,13 +206,16 @@ export default function App() {
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
     gemini: { model: 'gemini-3.1-pro-preview', apiKey: '' },
-    openai: { model: 'gpt-4o', apiKey: '' },
-    anthropic: { model: 'claude-3-5-sonnet-20240620', apiKey: '' }
+    openai: { model: 'gpt-5.4-nano', apiKey: '' },
+    production: { model: 'auto', apiKey: '' }
   });
-  const [selectedEngine, setSelectedEngine] = useState<EngineType>('gemini');
+  const [selectedEngine, setSelectedEngine] = useState<EngineType | 'production'>('gemini');
   const [showEngineSettings, setShowEngineSettings] = useState(false);
   
-  const getSectionStyle = (sectionId: string) => sectionStyles[sectionId] || DEFAULT_STYLE;
+  const getSectionStyle = (sectionId: string) => {
+    const style = sectionStyles[sectionId] || {};
+    return { ...DEFAULT_STYLE, ...style };
+  };
 
   const [configWidth, setConfigWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
@@ -184,10 +227,17 @@ export default function App() {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [tokenUsage, setTokenUsage] = useState(() => {
     const saved = localStorage.getItem('tokenUsage');
-    return saved ? JSON.parse(saved) : {
-      total: 1000000,
-      consumed: 0,
-      available: 1000000
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.available !== undefined) {
+        return { input: 0, output: 0, total: 0 };
+      }
+      return parsed;
+    }
+    return {
+      input: 0,
+      output: 0,
+      total: 0
     };
   });
 
@@ -378,6 +428,22 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
     );
   };
 
+  const getRouterConfig = (): RouterConfig => {
+    return {
+      mode: selectedEngine as any,
+      geminiConfig: {
+        engine: 'gemini',
+        model: engineConfig.gemini.model,
+        apiKey: engineConfig.gemini.apiKey
+      },
+      openaiConfig: {
+        engine: 'openai',
+        model: engineConfig.openai.model,
+        apiKey: engineConfig.openai.apiKey
+      }
+    };
+  };
+
   const handleFetchJobDescription = async () => {
     if (!jobUrl) {
       setError('Please enter a job URL first.');
@@ -387,12 +453,7 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
     setIsFetchingJob(true);
     setError(null);
     try {
-      const currentEngineConfig = {
-        engine: selectedEngine as EngineType,
-        model: engineConfig[selectedEngine as EngineType].model,
-        apiKey: engineConfig[selectedEngine as EngineType].apiKey
-      };
-      const text = await fetchJobDescription(jobUrl, currentEngineConfig);
+      const text = await fetchJobDescription(jobUrl, getRouterConfig());
       
       const lowerText = text.toLowerCase();
       if (
@@ -415,17 +476,41 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
   };
 
   const handleOptimize = async () => {
+    console.log("handleOptimize called");
     if (!jobDescription && !jobUrl) {
       setError('Please provide a job description or job URL to optimize against.');
       return;
     }
 
-    if (selectedAudiences.length === 0) {
-      setError('Please select at least one target audience.');
-      return;
+    let currentAudiences = [...selectedAudiences];
+    if (currentAudiences.length === 0) {
+      if (!jobDescription && !jobUrl) {
+        setError('Please provide a job description or job URL to optimize against.');
+        return;
+      }
+      
+      setIsOptimizing(true);
+      setError(null);
+      
+      try {
+        const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig());
+        if (bestAudiences && bestAudiences.length > 0) {
+          setSelectedAudiences(bestAudiences);
+          currentAudiences = bestAudiences;
+        } else {
+          setError('Could not auto-select audience. Please select at least one manually.');
+          setIsOptimizing(false);
+          return;
+        }
+      } catch (err) {
+        console.error("Auto-selection failed:", err);
+        setError('Auto-selection failed. Please select an audience manually.');
+        setIsOptimizing(false);
+        return;
+      }
+    } else {
+      setIsOptimizing(true);
     }
-
-    setIsOptimizing(true);
     setCurrentOptimizingEngine(selectedEngine);
     setError(null);
     setResults({});
@@ -438,52 +523,55 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
       const finalResumeText = resumeText || JSON.stringify(masterResume, null, 2);
       const finalTargetRole = targetRole || "Professional Candidate";
       
-      let firstAudienceId: string | null = null;
-      
-      // Process audiences one by one
-      for (let i = 0; i < selectedAudiences.length; i++) {
-        const audienceId = selectedAudiences[i];
-        if (controller.signal.aborted) break;
-        
-        // Add a small delay between requests to avoid hitting RPM limits (especially for free tier)
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+      const routerConfig = getRouterConfig();
+
+      // Run all audience optimizations in parallel
+      await Promise.all(currentAudiences.map(async (audienceId) => {
+        if (controller.signal.aborted) return;
         
         try {
           const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
-          const currentEngineConfig = {
-            engine: selectedEngine,
-            model: engineConfig[selectedEngine].model,
-            apiKey: engineConfig[selectedEngine].apiKey
-          };
-          const data = await optimizeResume(finalResumeText, jobDescription, finalTargetRole, mode, audienceLabel, currentEngineConfig, linkedInUrl, linkedInPdfText, jobUrl, fastMode, recruiterSimulationMode);
+          const data = await optimizeResume(
+            finalResumeText, 
+            jobDescription, 
+            finalTargetRole, 
+            mode, 
+            audienceLabel, 
+            routerConfig, 
+            linkedInUrl, 
+            linkedInPdfText, 
+            jobUrl, 
+            fastMode, 
+            recruiterSimulationMode
+          );
           
           // Update token usage
           if (data._usage) {
-            setTokenUsage(prev => {
-              const newConsumed = prev.consumed + data._usage!.totalTokenCount;
-              return {
-                ...prev,
-                consumed: newConsumed,
-                available: Math.max(0, prev.total - newConsumed)
-              };
-            });
+            setTokenUsage(prev => ({
+              input: (prev.input || 0) + (data._usage!.promptTokenCount || 0),
+              output: (prev.output || 0) + (data._usage!.candidatesTokenCount || 0),
+              total: (prev.total || 0) + (data._usage!.totalTokenCount || 0)
+            }));
           }
 
-          // Update results incrementally
-          setResults({ 
-            ...results, 
-            [audienceId]: { 
-              ...data, 
-              _engine: selectedEngine, 
-              _model: engineConfig[selectedEngine].model 
-            } as any
+          // Update results incrementally using functional update to avoid race conditions
+          setResults(prev => {
+            const newResults = { 
+              ...prev, 
+              [audienceId]: { 
+                ...data, 
+                _engine: selectedEngine, 
+                _model: engineConfig[selectedEngine].model 
+              } as any
+            };
+            
+            // Set active audience to the first one that completes if none is set
+            if (!activeAudience) {
+              setActiveAudience(audienceId);
+            }
+            
+            return newResults;
           });
-          if (!firstAudienceId) {
-            firstAudienceId = audienceId;
-            setActiveAudience(audienceId);
-          }
         } catch (innerErr: any) {
           console.error(`Error optimizing for ${audienceId}:`, innerErr);
           const isRateLimit = innerErr?.message?.includes("429") || innerErr?.message?.includes("RESOURCE_EXHAUSTED") || innerErr?.message?.includes("quota");
@@ -493,7 +581,7 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
             setError(`Failed to optimize for ${audienceId}. ${innerErr.message || ''}`);
           }
         }
-      }
+      }));
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Optimization aborted');
@@ -559,16 +647,26 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
     alert('Resume text copied to clipboard! You can paste this into Word or any other editor.');
   };
 
+  const leftPanelRef = useRef<HTMLDivElement>(null);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsResizing(true);
     e.preventDefault();
   };
 
   useEffect(() => {
+    let animationFrameId: number;
+
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      requestAnimationFrame(() => {
-        const newWidth = Math.max(300, Math.min(800, e.clientX));
+      if (!isResizing || !leftPanelRef.current) return;
+      
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      
+      animationFrameId = requestAnimationFrame(() => {
+        const rect = leftPanelRef.current!.getBoundingClientRect();
+        const newWidth = Math.max(300, Math.min(800, e.clientX - rect.left));
         setConfigWidth(newWidth);
       });
     };
@@ -585,6 +683,9 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
     }
 
     return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp, { capture: true });
       document.body.style.cursor = '';
@@ -604,27 +705,65 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
     setIsDownloading(true);
 
     try {
-      // Small delay to allow React to re-render with legacy-colors and without highlights
+      // Small delay to allow React to re-render without highlights
       await new Promise(resolve => setTimeout(resolve, 400));
 
-      const opt = {
-        margin:       [10, 10, 10, 10] as [number, number, number, number], // Add some margin for safety
-        filename:     `Professional_Resume_${(targetRole || "Expert").replace(/\s+/g, '_')}.pdf`,
-        image:        { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas:  { 
-          scale: 2, 
-          useCORS: true, 
-          logging: false,
-          letterRendering: true,
-          windowWidth: 794 // Force A4 width for consistent rendering
-        },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-        pagebreak:    { mode: 'css', avoid: '.resume-section' }
-      };
+      // Extract all styles from the document to ensure the PDF matches the preview
+      const styles = Array.from(document.styleSheets)
+        .map((styleSheet) => {
+          try {
+            return Array.from(styleSheet.cssRules)
+              .map((rule) => rule.cssText)
+              .join("");
+          } catch (e) {
+            // Handle cross-origin stylesheets (like Google Fonts)
+            return "";
+          }
+        })
+        .join("\n");
 
-      // @ts-ignore
-      const html2pdf = (await import('html2pdf.js')).default;
-      await html2pdf().set(opt).from(element).save();
+      // Get any custom fonts injected via @font-face
+      const customFonts = Array.from(document.querySelectorAll('style'))
+        .filter(s => s.innerHTML.includes('@font-face'))
+        .map(s => s.innerHTML)
+        .join('\n');
+
+      const response = await fetch('/api/generate-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          html: element.outerHTML,
+          css: styles,
+          fonts: customFonts
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to generate PDF on server');
+      }
+
+      const blob = await response.blob();
+      if (blob.type !== 'application/pdf') {
+        throw new Error('Server did not return a valid PDF file');
+      }
+      
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const baseName = companyName ? companyName.replace(/\s+/g, '_') : (targetRole || "Expert").replace(/\s+/g, '_');
+      
+      a.href = url;
+      a.download = `Professional_Resume_${baseName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Small delay before cleanup to ensure download starts correctly
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 1000);
 
     } catch (err) {
       console.error('PDF Generation Error:', err);
@@ -662,11 +801,11 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             style={{ 
               fontFamily: getSectionStyle('header').fontFamily, 
               textAlign: 'center',
-              lineHeight: getSectionStyle('header').lineHeight || 1.4,
+              lineHeight: getSectionStyle('header').lineHeight,
               color: getSectionStyle('header').color,
-              letterSpacing: `${getSectionStyle('header').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('header').padding || 0}px`,
-              marginBottom: `${getSectionStyle('header').margin || 32}px`,
+              letterSpacing: `${getSectionStyle('header').letterSpacing}em`,
+              padding: `${getSectionStyle('header').padding}px`,
+              marginBottom: `${getSectionStyle('header').margin}px`,
             }}
           >
             <h1 className="font-bold uppercase tracking-[0.2em] mb-3" style={{ fontSize: '26px' }}>
@@ -696,12 +835,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             style={{ 
               fontFamily: getSectionStyle('summary').fontFamily, 
               textAlign: 'justify',
-              lineHeight: getSectionStyle('summary').lineHeight || 1.5,
+              lineHeight: getSectionStyle('summary').lineHeight,
               color: getSectionStyle('summary').color,
-              letterSpacing: `${getSectionStyle('summary').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('summary').padding || 0}px`,
-              marginBottom: `${getSectionStyle('summary').margin || 24}px`,
-              fontSize: `${getSectionStyle('summary').fontSize || 10.5}px`,
+              letterSpacing: `${getSectionStyle('summary').letterSpacing}em`,
+              padding: `${getSectionStyle('summary').padding}px`,
+              marginBottom: `${getSectionStyle('summary').margin}px`,
+              fontSize: `${getSectionStyle('summary').fontSize}px`,
             }}
           >
             <h2 className="font-bold mb-2 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
@@ -718,52 +857,50 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('skills').fontFamily, 
-              lineHeight: getSectionStyle('skills').lineHeight || 1.4,
+              lineHeight: getSectionStyle('skills').lineHeight,
               color: getSectionStyle('skills').color,
-              letterSpacing: `${getSectionStyle('skills').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('skills').padding || 0}px`,
-              marginBottom: `${getSectionStyle('skills').margin || 24}px`,
-              fontSize: `${getSectionStyle('skills').fontSize || 10.5}px`,
+              letterSpacing: `${getSectionStyle('skills').letterSpacing}em`,
+              padding: `${getSectionStyle('skills').padding}px`,
+              marginBottom: `${getSectionStyle('skills').margin}px`,
+              fontSize: `${getSectionStyle('skills').fontSize}px`,
             }}
           >
             <h2 className="font-bold mb-3 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Core Competencies
             </h2>
             {results[activeAudience!]?.skills && !Array.isArray(results[activeAudience!].skills) ? (
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+              <div className="flex flex-col gap-1.5">
                 {Object.entries(results[activeAudience!].skills).map(([category, items]) => (
-                  <div key={category}>
-                    <div className="font-bold uppercase text-[10px] text-emerald-700 mb-1">{category}</div>
-                    <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
-                      {(items as unknown as string[]).map((s, i) => (
-                        <span key={i} className="opacity-90">{s}{i < (items as unknown as string[]).length - 1 ? ',' : ''}</span>
-                      ))}
-                    </div>
+                  <div key={category} className="text-[11px] leading-tight">
+                    <span className="font-bold uppercase text-emerald-700 mr-2">{category}:</span>
+                    <span className="opacity-90">{(items as unknown as string[]).join(' • ')}</span>
                   </div>
                 ))}
               </div>
-            ) : typeof masterResume.core_competencies === 'object' ? (
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+            ) : typeof masterResume.core_competencies === 'object' && !Array.isArray(masterResume.core_competencies) ? (
+              <div className="flex flex-col gap-1.5">
                 {Object.entries(masterResume.core_competencies).map(([category, items]) => (
-                  <div key={category}>
-                    <div className="font-bold uppercase text-[10px] text-emerald-700 mb-1">{category}</div>
-                    <div className="flex flex-wrap gap-x-1.5 gap-y-0.5">
-                      {(items as unknown as string[]).map((s, i) => (
-                        <span key={i} className="opacity-90">{s}{i < (items as unknown as string[]).length - 1 ? ',' : ''}</span>
-                      ))}
-                    </div>
+                  <div key={category} className="text-[11px] leading-tight">
+                    <span className="font-bold uppercase text-emerald-700 mr-2">{category}:</span>
+                    <span className="opacity-90">{(items as unknown as string[]).join(' • ')}</span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-x-8 gap-y-1">
-                {((Array.isArray(results[activeAudience!]?.skills) ? results[activeAudience!].skills : Object.values(results[activeAudience!].skills as any).flat()) as any as string[]).map((s, i) => (
-                  <div key={i} className="resume-bullet-item">
-                    <div className="resume-bullet-dot mt-1.5" />
-                    <span className="resume-bullet-text opacity-90">{s}</span>
-                  </div>
+              <ul className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5 list-none p-0 m-0">
+                {((
+                  activeAudience && results[activeAudience]?.skills 
+                    ? (Array.isArray(results[activeAudience].skills) 
+                        ? results[activeAudience].skills 
+                        : Object.values(results[activeAudience].skills).flat())
+                    : masterResume.core_competencies
+                ) as string[]).map((s, i) => (
+                  <li key={i} className="flex items-start gap-2 text-[11px] opacity-90 leading-tight">
+                    <span className="mt-1.5 w-1 h-1 bg-black rounded-full shrink-0 opacity-60"></span>
+                    <span>{s}</span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </div>
         );
@@ -775,12 +912,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('certifications').fontFamily, 
-              lineHeight: getSectionStyle('certifications').lineHeight || 1.4,
+              lineHeight: getSectionStyle('certifications').lineHeight,
               color: getSectionStyle('certifications').color,
-              letterSpacing: `${getSectionStyle('certifications').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('certifications').padding || 0}px`,
-              marginBottom: `${getSectionStyle('certifications').margin || 24}px`,
-              fontSize: `${getSectionStyle('certifications').fontSize || 10.5}px`,
+              letterSpacing: `${getSectionStyle('certifications').letterSpacing}em`,
+              padding: `${getSectionStyle('certifications').padding}px`,
+              marginBottom: `${getSectionStyle('certifications').margin}px`,
+              fontSize: `${getSectionStyle('certifications').fontSize}px`,
             }}
           >
             <h2 className="font-bold mb-3 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
@@ -789,7 +926,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             <div className="grid grid-cols-1 gap-1">
               {(results[activeAudience!]?.certifications || masterResume.certifications).map((cert, i) => (
                 <div key={i} className="resume-bullet-item">
-                  <div className="resume-bullet-dot mt-1.5" />
+                  <div className="resume-bullet-dot" />
                   <span className="resume-bullet-text opacity-90 font-medium">{cert}</span>
                 </div>
               ))}
@@ -804,12 +941,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             className={`cursor-pointer transition-all rounded p-2 -m-2 mb-6 resume-section ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('experience').fontFamily, 
-              lineHeight: getSectionStyle('experience').lineHeight || 1.4,
+              lineHeight: getSectionStyle('experience').lineHeight,
               color: getSectionStyle('experience').color,
-              letterSpacing: `${getSectionStyle('experience').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('experience').padding || 0}px`,
-              marginBottom: `${getSectionStyle('experience').margin || 24}px`,
-              fontSize: `${getSectionStyle('experience').fontSize || 10.5}px`,
+              letterSpacing: `${getSectionStyle('experience').letterSpacing}em`,
+              padding: `${getSectionStyle('experience').padding}px`,
+              marginBottom: `${getSectionStyle('experience').margin}px`,
+              fontSize: `${getSectionStyle('experience').fontSize}px`,
             }}
           >
             <h2 className="font-bold mb-4 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
@@ -827,7 +964,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                   <div className="space-y-1">
                     {exp.bullets.map((b, bi) => (
                       <div key={bi} className="resume-bullet-item">
-                        <div className="resume-bullet-dot mt-1.5" />
+                        <div className="resume-bullet-dot" />
                         <span className="resume-bullet-text opacity-90 leading-relaxed">{b}</span>
                       </div>
                     ))}
@@ -846,12 +983,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'projects' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('projects').fontFamily, 
-              lineHeight: getSectionStyle('projects').lineHeight || 1.4,
+              lineHeight: getSectionStyle('projects').lineHeight,
               color: getSectionStyle('projects').color,
-              letterSpacing: `${getSectionStyle('projects').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('projects').padding || 0}px`,
-              marginBottom: `${getSectionStyle('projects').margin || 24}px`,
-              fontSize: `${getSectionStyle('projects').fontSize || 10.5}px`,
+              letterSpacing: `${getSectionStyle('projects').letterSpacing}em`,
+              padding: `${getSectionStyle('projects').padding}px`,
+              marginBottom: `${getSectionStyle('projects').margin}px`,
+              fontSize: `${getSectionStyle('projects').fontSize}px`,
             }}
           >
             <h2 className="font-bold mb-4 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
@@ -879,12 +1016,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('education').fontFamily, 
-              lineHeight: getSectionStyle('education').lineHeight || 1.4,
+              lineHeight: getSectionStyle('education').lineHeight,
               color: getSectionStyle('education').color,
-              letterSpacing: `${getSectionStyle('education').letterSpacing || 0}em`,
-              padding: `${getSectionStyle('education').padding || 0}px`,
-              marginBottom: `${getSectionStyle('education').margin || 24}px`,
-              fontSize: `${getSectionStyle('education').fontSize || 10.5}px`,
+              letterSpacing: `${getSectionStyle('education').letterSpacing}em`,
+              padding: `${getSectionStyle('education').padding}px`,
+              marginBottom: `${getSectionStyle('education').margin}px`,
+              fontSize: `${getSectionStyle('education').fontSize}px`,
             }}
           >
             <h2 className="font-bold mb-3 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
@@ -893,7 +1030,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             {(results[activeAudience!]?.education || [masterResume.education]).map((edu, i) => (
               <div key={i} className="mb-2 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                 <div className="resume-bullet-item">
-                  <div className="resume-bullet-dot mt-1.5" />
+                  <div className="resume-bullet-dot" />
                   <span className="resume-bullet-text opacity-90 font-medium">
                     {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}
                   </span>
@@ -931,13 +1068,14 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
       </header>
 
       <div className="w-full max-w-7xl mx-auto px-4 py-4 md:py-8">
-        <div className="flex flex-col md:flex-row gap-8 relative min-h-[calc(100vh-200px)]">
+        <div className="flex flex-col md:flex-row gap-4 md:gap-8 relative min-h-[calc(100vh-200px)]">
           {/* Configuration Pane */}
           <div 
+            ref={leftPanelRef}
             className={`w-full md:flex-shrink-0 md:h-screen md:overflow-y-auto md:sticky md:top-20 custom-scrollbar`}
             style={{ width: typeof window !== 'undefined' && window.innerWidth >= 768 ? `${configWidth}px` : '100%' }}
           >
-            <div className="sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-4 border-b border-black/5 dark:border-white/10">
+            <div className="sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-2 md:p-4 border-b border-black/5 dark:border-white/10">
                     <div className="flex gap-1 p-1 bg-black/10 dark:bg-white/5 rounded-lg">
                       {(['config', 'style', 'tools'] as const).map((tab) => (
                         <button
@@ -955,7 +1093,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     </div>
             </div>
             
-            <div className="p-4 space-y-6">
+            <div className="p-2 md:p-4 space-y-6">
               {activeTab === 'config' && (
                 <div className="space-y-6">
                   <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
@@ -989,25 +1127,59 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           />
                         </div>
                       </div>
-                      {/* Audience Selection */}
+                      {/* Company Name */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Target Audiences (Multi-select)</label>
-                        <div className="flex flex-wrap gap-2">
-                          {AUDIENCES.map((audience) => (
-                            <button
-                              key={audience.id}
-                              onClick={() => toggleAudience(audience.id)}
-                              className={`px-3 py-2 text-[11px] font-bold rounded-lg border transition-all flex items-center gap-2 ${
-                                selectedAudiences.includes(audience.id)
-                                  ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
-                                  : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10 hover:border-white/30' : 'bg-white text-black/60 border-black/5 hover:border-black/20')
-                              }`}
-                            >
-                              <span>{audience.icon}</span>
-                              {audience.label}
-                            </button>
-                          ))}
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Company Name (Optional)</label>
+                        <div className="relative">
+                          <Building className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-30`} />
+                          <input 
+                            type="text"
+                            placeholder="e.g. Microsoft"
+                            className={`w-full pl-10 pr-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                            }`}
+                            value={companyName}
+                            onChange={(e) => setCompanyName(e.target.value)}
+                          />
                         </div>
+                      </div>
+                      {/* Audience Selection */}
+                      <div className="relative" ref={audienceDropdownRef}>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Target Audiences (Multi-select)</label>
+                        <button
+                          onClick={() => setIsAudienceDropdownOpen(!isAudienceDropdownOpen)}
+                          className={`w-full px-3 py-2 text-xs border rounded-lg flex items-center justify-between ${
+                            isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                          }`}
+                        >
+                          <span className="truncate">
+                            {selectedAudiences.length > 0
+                              ? selectedAudiences.map(id => AUDIENCES.find(a => a.id === id)?.label).join(', ')
+                              : 'Select audiences...'}
+                          </span>
+                          <ChevronDown className="w-4 h-4 opacity-50" />
+                        </button>
+                        {isAudienceDropdownOpen && (
+                          <div className={`absolute z-50 w-full mt-1 border rounded-lg shadow-lg max-h-60 overflow-y-auto ${
+                            isDarkMode ? 'bg-[#1A1A1A] border-white/10' : 'bg-white border-black/5'
+                          }`}>
+                            {AUDIENCES.map((audience) => (
+                              <button
+                                key={audience.id}
+                                onClick={() => toggleAudience(audience.id)}
+                                className={`w-full px-3 py-2 text-xs flex items-center gap-2 ${
+                                  selectedAudiences.includes(audience.id)
+                                    ? (isDarkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-500/10 text-emerald-700')
+                                    : (isDarkMode ? 'text-white hover:bg-white/5' : 'text-black hover:bg-black/5')
+                                }`}
+                              >
+                                <span>{audience.icon}</span>
+                                {audience.label}
+                                {selectedAudiences.includes(audience.id) && <CheckCircle2 className="w-4 h-4 ml-auto" />}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {/* Optimization Mode */}
                       <div>
@@ -1071,19 +1243,29 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           
                           <button
                             onClick={async () => {
-                              if (!jobDescription || !targetRole) {
-                                setError('Please provide both Job Description and Target Role.');
+                              console.log('Auto-select button clicked');
+                              if (!jobDescription && !jobUrl) {
+                                setError('Please provide a Job Description or Job URL.');
                                 return;
                               }
-                              const currentEngineConfig = {
-                                engine: selectedEngine,
-                                model: engineConfig[selectedEngine].model,
-                                apiKey: engineConfig[selectedEngine].apiKey
-                              };
-                              const bestAudience = await analyzeBestAudience(jobDescription, targetRole, currentEngineConfig);
-                              setSelectedAudiences([bestAudience]);
+                              try {
+                                setIsOptimizing(true); // Reuse optimizing state for loading indicator
+                                const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig());
+                                console.log('Best audiences found:', bestAudiences);
+                                if (bestAudiences && bestAudiences.length > 0) {
+                                  setSelectedAudiences(bestAudiences);
+                                }
+                              } catch (error) {
+                                console.error('Error auto-selecting audience:', error);
+                                setError('Failed to auto-select audience. Please try again.');
+                              } finally {
+                                setIsOptimizing(false);
+                              }
                             }}
+                            disabled={isOptimizing}
                             className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center border transition-all ${
+                              isOptimizing ? 'opacity-50 cursor-not-allowed' : ''
+                            } ${
                               isDarkMode ? 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10' : 'bg-white border-black/5 text-black/60 hover:bg-black/5'
                             }`}
                           >
@@ -1153,95 +1335,157 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         )}
                       </div>
                       {/* AI Engine Settings */}
-                      <div className={`rounded-xl border p-4 transition-colors ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
-                        <button 
-                          onClick={() => setShowEngineSettings(!showEngineSettings)}
-                          className="w-full flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Cpu className="w-4 h-4 text-emerald-500" />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">AI Engine Settings</span>
+                      <div className={`rounded-xl border p-6 transition-all resize-y overflow-auto min-h-[300px] shadow-sm ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                        <div className="flex items-center gap-3 mb-8">
+                          <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50'}`}>
+                            <Cpu className="w-5 h-5 text-emerald-500" />
                           </div>
-                          {showEngineSettings ? <ChevronDown className="w-4 h-4 opacity-50" /> : <ChevronRight className="w-4 h-4 opacity-50" />}
-                        </button>
-                        <AnimatePresence>
-                          {showEngineSettings && (
-                            <motion.div 
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="mt-4 space-y-4 overflow-hidden"
-                            >
-                              <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">Select Engine</label>
-                                <div className="grid grid-cols-3 gap-1">
-                                  {(['gemini', 'openai', 'anthropic'] as const).map((eng) => (
-                                    <button
-                                      key={eng}
-                                      onClick={() => setSelectedEngine(eng)}
-                                      className={`py-1.5 text-[10px] font-bold rounded border transition-all capitalize ${
-                                        selectedEngine === eng 
-                                          ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500' : 'bg-black text-white border-black')
-                                          : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10' : 'bg-white text-black/60 border-black/5')
-                                      }`}
-                                    >
-                                      {eng}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                              <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">Model</label>
-                                <select 
-                                  className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
-                                    isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                          <div>
+                            <span className="text-[12px] font-black uppercase tracking-[0.2em] block">AI Engine Settings</span>
+                            <span className="text-[9px] opacity-40 uppercase tracking-widest">Configure your intelligence layer</span>
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-10">
+                          <div>
+                            <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-4 opacity-50">Select Engine</label>
+                            <div className="grid grid-cols-3 gap-3">
+                              {(['gemini', 'openai', 'production'] as const).map((eng) => (
+                                <button
+                                  key={eng}
+                                  onClick={() => setSelectedEngine(eng)}
+                                  className={`py-3 text-[10px] font-black rounded-xl border transition-all capitalize tracking-widest ${
+                                    selectedEngine === eng 
+                                      ? (isDarkMode ? 'bg-emerald-500 text-black border-emerald-500 shadow-xl shadow-emerald-500/20 scale-[1.02]' : 'bg-black text-white border-black shadow-xl shadow-black/20 scale-[1.02]')
+                                      : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10' : 'bg-white text-black/60 border-black/5 hover:bg-black/5')
                                   }`}
-                                  value={engineConfig[selectedEngine].model}
-                                  onChange={(e) => setEngineConfig({
-                                    ...engineConfig,
-                                    [selectedEngine]: { ...engineConfig[selectedEngine], model: e.target.value }
-                                  })}
                                 >
-                                  {selectedEngine === 'gemini' && (
-                                    <>
-                                      <option value="gemini-3.1-pro-preview" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Gemini 3.1 Pro</option>
-                                      <option value="gemini-3-flash-preview" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Gemini 3 Flash</option>
-                                    </>
-                                  )}
-                                  {selectedEngine === 'openai' && (
-                                    <>
-                                      <option value="gpt-4o" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>GPT-4o</option>
-                                      <option value="gpt-4-turbo" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>GPT-4 Turbo</option>
-                                      <option value="gpt-3.5-turbo" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>GPT-3.5 Turbo</option>
-                                    </>
-                                  )}
-                                  {selectedEngine === 'anthropic' && (
-                                    <>
-                                      <option value="claude-3-5-sonnet-20240620" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Claude 3.5 Sonnet</option>
-                                      <option value="claude-3-opus-20240229" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Claude 3 Opus</option>
-                                      <option value="claude-3-haiku-20240307" className={isDarkMode ? 'bg-[#1A1A1A] text-white' : ''}>Claude 3 Haiku</option>
-                                    </>
-                                  )}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-[9px] font-bold uppercase tracking-widest mb-1 opacity-40">API Key (Optional if env set)</label>
-                                <input 
-                                  type="password"
-                                  placeholder={`Enter ${selectedEngine} API key`}
-                                  className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
-                                    isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
-                                  }`}
-                                  value={engineConfig[selectedEngine].apiKey}
-                                  onChange={(e) => setEngineConfig({
-                                    ...engineConfig,
-                                    [selectedEngine]: { ...engineConfig[selectedEngine], apiKey: e.target.value }
-                                  })}
-                                />
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                                  {eng === 'production' ? 'Auto' : eng}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-8">
+                           {selectedEngine !== 'production' ? (
+                             <div className="space-y-3">
+                               <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-2 opacity-50">Model Configuration</label>
+                               <div className="relative">
+                                 <select 
+                                   className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all appearance-none ${
+                                     isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                                   }`}
+                                   value={engineConfig[selectedEngine].model}
+                                   onChange={(e) => setEngineConfig({
+                                     ...engineConfig,
+                                     [selectedEngine]: { ...engineConfig[selectedEngine], model: e.target.value }
+                                   })}
+                                 >
+                                   {selectedEngine === 'gemini' && (
+                                     <>
+                                       <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Recommended)</option>
+                                       <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
+                                     </>
+                                   )}
+                                   {selectedEngine === 'openai' && (
+                                     <>
+                                       <option value="gpt-5.4">GPT-5.4 (Latest)</option>
+                                       <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+                                       <option value="o1">o1 (Reasoning)</option>
+                                       <option value="o3-mini">o3-mini</option>
+                                       <option value="gpt-4o">GPT-4o</option>
+                                       <option value="gpt-4o-mini">GPT-4o-mini</option>
+                                     </>
+                                   )}
+                                 </select>
+                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
+                                   <ChevronDown className="w-4 h-4" />
+                                 </div>
+                               </div>
+                             </div>
+                           ) : (
+                             <div className={`p-5 rounded-2xl border transition-all ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
+                               <div className="flex items-start gap-4">
+                                 <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-emerald-500/20' : 'bg-white shadow-sm'}`}>
+                                   <Zap className="w-5 h-5 text-emerald-500" />
+                                 </div>
+                                 <div>
+                                   <p className="text-[12px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-[0.15em]">Smart Routing Active</p>
+                                   <p className="text-[11px] opacity-70 mt-2 leading-relaxed font-medium">
+                                     Dynamic orchestration: Gemini handles structural extraction while OpenAI powers high-fidelity content generation.
+                                   </p>
+                                 </div>
+                               </div>
+                             </div>
+                           )}
+
+                           <div className="space-y-4">
+                             <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-2 opacity-50">
+                               {selectedEngine === 'production' ? 'Authentication Keys' : 'Authentication Key'}
+                             </label>
+                             
+                             {selectedEngine === 'production' ? (
+                               <div className="grid grid-cols-1 gap-6">
+                                 <div className="space-y-2">
+                                   <div className="flex items-center justify-between px-1">
+                                     <p className="text-[10px] font-black uppercase tracking-[0.1em] opacity-40">Gemini API</p>
+                                     <span className="text-[9px] opacity-30 font-mono">Required</span>
+                                   </div>
+                                   <input 
+                                     type="password"
+                                     placeholder="Enter Gemini API Key"
+                                     className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                       isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                                     }`}
+                                     value={engineConfig.gemini.apiKey}
+                                     onChange={(e) => setEngineConfig({
+                                       ...engineConfig,
+                                       gemini: { ...engineConfig.gemini, apiKey: e.target.value }
+                                     })}
+                                   />
+                                 </div>
+                                 <div className="space-y-2">
+                                   <div className="flex items-center justify-between px-1">
+                                     <p className="text-[10px] font-black uppercase tracking-[0.1em] opacity-40">OpenAI API</p>
+                                     <span className="text-[9px] opacity-30 font-mono">Required</span>
+                                   </div>
+                                   <input 
+                                     type="password"
+                                     placeholder="Enter OpenAI API Key"
+                                     className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                       isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                                     }`}
+                                     value={engineConfig.openai.apiKey}
+                                     onChange={(e) => setEngineConfig({
+                                       ...engineConfig,
+                                       openai: { ...engineConfig.openai, apiKey: e.target.value }
+                                     })}
+                                   />
+                                 </div>
+                               </div>
+                             ) : (
+                               <div className="space-y-2">
+                                 <div className="flex items-center justify-between px-1">
+                                   <p className="text-[10px] font-black uppercase tracking-[0.1em] opacity-40 capitalize">{selectedEngine} API</p>
+                                   <span className="text-[9px] opacity-30 font-mono">Optional if env set</span>
+                                 </div>
+                                 <input 
+                                   type="password"
+                                   placeholder={`Enter ${selectedEngine} API key`}
+                                   className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                                     isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
+                                   }`}
+                                   value={engineConfig[selectedEngine].apiKey}
+                                   onChange={(e) => setEngineConfig({
+                                     ...engineConfig,
+                                     [selectedEngine]: { ...engineConfig[selectedEngine], apiKey: e.target.value }
+                                   })}
+                                 />
+                               </div>
+                             )}
+                           </div>
+                          </div>
+                        </div>
                       </div>
                       {/* LinkedIn Profile */}
                       <div>
@@ -1336,7 +1580,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           </div>
                           <textarea 
                             placeholder="Paste the target job description here..."
-                            className={`w-full h-32 p-4 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none text-sm leading-relaxed ${
+                            className={`w-full h-32 p-4 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-y text-sm leading-relaxed ${
                               isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
                             }`}
                             value={jobDescription}
@@ -1384,29 +1628,39 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                               <div className="flex justify-between items-center mb-2">
                                 <div className="flex items-center gap-2">
                                   <Cpu className="w-3 h-3 opacity-50" />
-                                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Usage</span>
+                                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Usage & Pricing</span>
                                 </div>
-                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Free Account</span>
+                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{selectedEngine}</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 mb-3 pb-3 border-b border-black/5 dark:border-white/5">
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] uppercase opacity-40 font-bold">Model</span>
+                                  <span className="text-[10px] font-mono font-bold truncate" title={engineConfig[selectedEngine].model}>{engineConfig[selectedEngine].model}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] uppercase opacity-40 font-bold">Input / 1M</span>
+                                  <span className="text-[10px] font-mono font-bold">${MODEL_PRICING[engineConfig[selectedEngine].model]?.input.toFixed(2) || 'N/A'}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] uppercase opacity-40 font-bold">Output / 1M</span>
+                                  <span className="text-[10px] font-mono font-bold">${MODEL_PRICING[engineConfig[selectedEngine].model]?.output.toFixed(2) || 'N/A'}</span>
+                                </div>
                               </div>
                               <div className="grid grid-cols-3 gap-2">
                                 <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Total</span>
-                                  <span className="text-xs font-mono font-bold">{(tokenUsage.total / 1000).toFixed(0)}k</span>
+                                  <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
+                                  <span className="text-xs font-mono font-bold">{(tokenUsage.input / 1000).toFixed(1)}k</span>
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Consumed</span>
-                                  <span className="text-xs font-mono font-bold">{(tokenUsage.consumed / 1000).toFixed(1)}k</span>
+                                  <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
+                                  <span className="text-xs font-mono font-bold">{(tokenUsage.output / 1000).toFixed(1)}k</span>
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Available</span>
-                                  <span className="text-xs font-mono font-bold">{(tokenUsage.available / 1000).toFixed(1)}k</span>
+                                  <span className="text-[9px] uppercase opacity-40 font-bold">Est. Cost</span>
+                                  <span className="text-xs font-mono font-bold text-emerald-500">
+                                    ${((tokenUsage.input / 1000000) * (MODEL_PRICING[engineConfig[selectedEngine].model]?.input || 0) + (tokenUsage.output / 1000000) * (MODEL_PRICING[engineConfig[selectedEngine].model]?.output || 0)).toFixed(4)}
+                                  </span>
                                 </div>
-                              </div>
-                              <div className="mt-2 h-1 w-full bg-black/20 dark:bg-white/10 rounded-full overflow-hidden">
-                                <div 
-                                  className="h-full bg-emerald-500 transition-all duration-500" 
-                                  style={{ width: `${(tokenUsage.consumed / tokenUsage.total) * 100}%` }}
-                                />
                               </div>
                             </div>
                           </div>
@@ -1520,12 +1774,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <div>
                           <div className="flex justify-between text-[10px] mb-1 opacity-60">
                             <span>Font Size</span>
-                            <span>{activeSection ? (getSectionStyle(activeSection).fontSize || DEFAULT_STYLE.fontSize) : DEFAULT_STYLE.fontSize}px</span>
+                            <span>{getSectionStyle(activeSection || 'header').fontSize}px</span>
                           </div>
                           <input 
                             type="range" min="8" max="24" step="0.5"
                             className="w-full h-1 bg-emerald-500/20 rounded-lg appearance-none cursor-pointer"
-                            value={activeSection ? (getSectionStyle(activeSection).fontSize || DEFAULT_STYLE.fontSize) : DEFAULT_STYLE.fontSize}
+                            value={getSectionStyle(activeSection || 'header').fontSize}
                             onChange={(e) => {
                               const val = parseFloat(e.target.value);
                               if (activeSection) {
@@ -1543,12 +1797,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <div>
                           <div className="flex justify-between text-[10px] mb-1 opacity-60">
                             <span>Line Height</span>
-                            <span>{activeSection ? (getSectionStyle(activeSection).lineHeight || DEFAULT_STYLE.lineHeight) : DEFAULT_STYLE.lineHeight}</span>
+                            <span>{getSectionStyle(activeSection || 'header').lineHeight}</span>
                           </div>
                           <input 
                             type="range" min="0.5" max="3" step="0.1"
                             className="w-full h-1 bg-emerald-500/20 rounded-lg appearance-none cursor-pointer"
-                            value={activeSection ? (getSectionStyle(activeSection).lineHeight || DEFAULT_STYLE.lineHeight) : DEFAULT_STYLE.lineHeight}
+                            value={getSectionStyle(activeSection || 'header').lineHeight}
                             onChange={(e) => {
                               const val = parseFloat(e.target.value);
                               if (activeSection) {
@@ -1566,12 +1820,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <div>
                           <div className="flex justify-between text-[10px] mb-1 opacity-60">
                             <span>Letter Spacing</span>
-                            <span>{activeSection ? (getSectionStyle(activeSection).letterSpacing || DEFAULT_STYLE.letterSpacing) : DEFAULT_STYLE.letterSpacing}</span>
+                            <span>{getSectionStyle(activeSection || 'header').letterSpacing}</span>
                           </div>
                           <input 
                             type="range" min="-0.1" max="0.5" step="0.01"
                             className="w-full h-1 bg-emerald-500/20 rounded-lg appearance-none cursor-pointer"
-                            value={activeSection ? (getSectionStyle(activeSection).letterSpacing || DEFAULT_STYLE.letterSpacing) : DEFAULT_STYLE.letterSpacing}
+                            value={getSectionStyle(activeSection || 'header').letterSpacing}
                             onChange={(e) => {
                               const val = parseFloat(e.target.value);
                               if (activeSection) {
@@ -1589,12 +1843,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <div>
                           <div className="flex justify-between text-[10px] mb-1 opacity-60">
                             <span>Padding</span>
-                            <span>{activeSection ? (getSectionStyle(activeSection).padding || DEFAULT_STYLE.padding) : DEFAULT_STYLE.padding}px</span>
+                            <span>{getSectionStyle(activeSection || 'header').padding}px</span>
                           </div>
                           <input 
                             type="range" min="0" max="50" step="1"
                             className="w-full h-1 bg-emerald-500/20 rounded-lg appearance-none cursor-pointer"
-                            value={activeSection ? (getSectionStyle(activeSection).padding || DEFAULT_STYLE.padding) : DEFAULT_STYLE.padding}
+                            value={getSectionStyle(activeSection || 'header').padding}
                             onChange={(e) => {
                               const val = parseInt(e.target.value);
                               if (activeSection) {
@@ -1612,12 +1866,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <div>
                           <div className="flex justify-between text-[10px] mb-1 opacity-60">
                             <span>Margin</span>
-                            <span>{activeSection ? (getSectionStyle(activeSection).margin || DEFAULT_STYLE.margin) : DEFAULT_STYLE.margin}px</span>
+                            <span>{getSectionStyle(activeSection || 'header').margin}px</span>
                           </div>
                           <input 
                             type="range" min="0" max="50" step="1"
                             className="w-full h-1 bg-emerald-500/20 rounded-lg appearance-none cursor-pointer"
-                            value={activeSection ? (getSectionStyle(activeSection).margin || DEFAULT_STYLE.margin) : DEFAULT_STYLE.margin}
+                            value={getSectionStyle(activeSection || 'header').margin}
                             onChange={(e) => {
                               const val = parseInt(e.target.value);
                               if (activeSection) {
@@ -1642,7 +1896,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     jobDescription={jobDescription}
                     isDarkMode={isDarkMode}
                     engineConfig={engineConfig}
-                    selectedEngine={selectedEngine}
+                    selectedEngine={selectedEngine as any}
                     onRestore={restoreVersion}
                     currentResults={results}
                   />
@@ -1663,10 +1917,70 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         </div>
                         {showInsights ? <ChevronDown className="w-4 h-4 opacity-50" /> : <ChevronRight className="w-4 h-4 opacity-50" />}
                       </button>
-                      {showInsights && (
-                        <div className="p-4 pt-0 text-xs leading-relaxed opacity-80">
-                          {/* Insights content would go here */}
-                          <p>Strategic insights based on your resume and job description analysis.</p>
+                      {showInsights && activeAudience && results[activeAudience] && (
+                        <div className="p-4 pt-0 text-xs leading-relaxed opacity-80 space-y-4">
+                          {results[activeAudience].match_score !== undefined && (
+                            <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5">
+                              <span className="font-bold">Match Score</span>
+                              <span className={`font-bold text-sm ${results[activeAudience].match_score >= 80 ? 'text-emerald-500' : results[activeAudience].match_score >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
+                                {results[activeAudience].match_score}%
+                              </span>
+                            </div>
+                          )}
+                          
+                          {results[activeAudience].rejection_reasons && results[activeAudience].rejection_reasons!.length > 0 && (
+                            <div className="space-y-2">
+                              <h4 className="font-bold text-red-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                                Recruiter Rejection Reasons
+                              </h4>
+                              <ul className="list-disc pl-5 space-y-1 text-red-400">
+                                {results[activeAudience].rejection_reasons!.map((reason, i) => (
+                                  <li key={i}>{reason}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {results[activeAudience].improvement_notes && results[activeAudience].improvement_notes!.length > 0 && (
+                            <div className="space-y-2">
+                              <h4 className="font-bold text-emerald-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Improvement Notes
+                              </h4>
+                              <ul className="list-disc pl-5 space-y-1">
+                                {results[activeAudience].improvement_notes!.map((note, i) => (
+                                  <li key={i}>{note}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {results[activeAudience].audience_alignment_notes && (
+                            <div className="space-y-2">
+                              <h4 className="font-bold text-blue-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                Audience Alignment
+                              </h4>
+                              <p>{results[activeAudience].audience_alignment_notes}</p>
+                            </div>
+                          )}
+
+                          {results[activeAudience].keyword_gap && results[activeAudience].keyword_gap!.length > 0 && (
+                            <div className="space-y-2">
+                              <h4 className="font-bold text-yellow-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500"></span>
+                                Missing Keywords
+                              </h4>
+                              <div className="flex flex-wrap gap-1">
+                                {results[activeAudience].keyword_gap!.map((kw, i) => (
+                                  <span key={i} className="px-2 py-0.5 rounded-md bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 text-[10px]">
+                                    {kw}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1679,8 +1993,10 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
         {/* Resize Handle */}
           <div 
             onMouseDown={handleMouseDown}
-            className={`hidden md:block w-1 cursor-col-resize hover:bg-emerald-500/50 transition-colors self-stretch rounded-full mx-2 ${isResizing ? 'bg-emerald-500' : 'bg-white/10'}`}
-          />
+            className={`hidden md:flex w-6 cursor-col-resize justify-center items-center group -mx-3 z-10`}
+          >
+            <div className={`w-1 h-16 rounded-full transition-colors ${isResizing ? 'bg-emerald-500' : 'bg-black/20 dark:bg-white/20 group-hover:bg-emerald-500/50'}`} />
+          </div>
 
           {/* Result Section */}
           <div className="flex-1 min-w-0">
@@ -1704,7 +2020,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     Our AI is analyzing the job description and tailoring your experience for your target audiences...
                   </p>
                 </motion.div>
-              ) : Object.keys(results).length === 0 ? (
+              ) : (Object.keys(results).length === 0 && !resumeText) ? (
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1721,7 +2037,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     Upload your resume and select your target audiences to begin the AI-powered optimization process.
                   </p>
                 </motion.div>
-              ) : (activeAudience && results[activeAudience]) && (
+              ) : ((activeAudience && results[activeAudience]) || resumeText) && (
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -1819,7 +2135,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       >
                         <div 
                           id="resume-container"
-                          className={`resume-page transition-all duration-300 relative overflow-hidden ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
+                          className={`resume-page transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                         >
                           {sectionOrder.map((sectionId) => renderSection(sectionId))}
                         </div>

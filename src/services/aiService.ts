@@ -15,7 +15,19 @@ export const optimizeFullResume = async (
       targetRole,
       "balanced",
       audience,
-      { engine: 'gemini', model: aiEngine }
+      { 
+        mode: 'gemini',
+        geminiConfig: {
+          engine: 'gemini',
+          model: aiEngine,
+          apiKey: process.env.GEMINI_API_KEY
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: 'gpt-4o-mini',
+          apiKey: process.env.OPENAI_API_KEY
+        }
+      }
     );
 
     return result;
@@ -34,19 +46,24 @@ export const improveTextWithAI = async (
     const modelName = context?.aiEngine || "gemini-3-flash-preview";
     
     const prompt = `
-      You are an expert resume writer. Improve the following resume text to be more impactful, professional, and aligned with industry standards.
+      You are a senior ATS resume strategist.
       
-      ${context?.targetRole ? `Target Role: ${context.targetRole}` : ''}
-      ${context?.jobDescription ? `Job Description: ${context.jobDescription}` : ''}
+      Tasks:
+      1. Rewrite the resume tailored to the job description
+      2. Improve keyword alignment
+      3. Keep it concise and professional
+      4. Maintain bullet formatting
+      5. Ensure it fits within 1–2 pages
+      
+      Output:
+      - Clean structured resume
+      - No explanations
       
       Original Text:
       "${text}"
       
-      Requirements:
-      - Use strong action verbs.
-      - Quantify achievements if possible.
-      - Keep it concise and professional.
-      - Return ONLY the improved text, no explanations.
+      ${context?.targetRole ? `Target Role: ${context.targetRole}` : ''}
+      ${context?.jobDescription ? `Job Description: ${context.jobDescription}` : ''}
     `;
 
     const response = await ai.models.generateContent({
@@ -71,7 +88,18 @@ export const rewriteSectionWithAI = async (
     const modelName = context?.aiEngine || "gemini-3-flash-preview";
 
     const prompt = `
-      You are an expert resume writer. Rewrite the following resume section to be more impactful.
+      You are a senior ATS resume strategist.
+      
+      Tasks:
+      1. Rewrite the resume tailored to the job description
+      2. Improve keyword alignment
+      3. Keep it concise and professional
+      4. Maintain bullet formatting
+      5. Ensure it fits within 1–2 pages
+      
+      Output:
+      - Clean structured resume
+      - No explanations
       
       Section Type: ${sectionType}
       ${context?.targetRole ? `Target Role: ${context.targetRole}` : ''}
@@ -79,12 +107,6 @@ export const rewriteSectionWithAI = async (
       
       Current Content:
       ${JSON.stringify(content, null, 2)}
-      
-      Requirements:
-      - Improve the wording and professional tone.
-      - Align with the target role and job description if provided.
-      - Return ONLY the improved content as a valid JSON object matching the input structure.
-      - No explanations, just the JSON.
     `;
 
     const response = await ai.models.generateContent({
