@@ -6,7 +6,7 @@ export const DEFAULT_STYLE = {
   lineHeight: 1.5,
   letterSpacing: 0,
   padding: 8,
-  margin: 24,
+  margin: 8,
   color: '#1a1a1a',
 };
 

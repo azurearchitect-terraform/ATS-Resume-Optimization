@@ -29,7 +29,8 @@ import {
   AlignCenter,
   AlignRight,
   AlignJustify,
-  Building
+  Building,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -86,7 +87,7 @@ const MODEL_PRICING: Record<string, { input: number, output: number }> = {
 export default function App() {
   const [resumeText, setResumeText] = useState(() => localStorage.getItem('resumeText') || '');
   const [jobDescription, setJobDescription] = useState('');
-  const [activeTab, setActiveTab] = useState<'config' | 'style' | 'tools'>('config');
+  const [activeTab, setActiveTab] = useState<'config' | 'style' | 'tools' | 'profile' | 'guide'>('config');
   const [targetRole, setTargetRole] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
@@ -134,6 +135,38 @@ export default function App() {
   const [jobUrl, setJobUrl] = useState('');
   const [isExtractingLinkedIn, setIsExtractingLinkedIn] = useState(false);
   const [isFetchingJob, setIsFetchingJob] = useState(false);
+
+  // Profile Overrides
+  const [profileName, setProfileName] = useState(() => localStorage.getItem('profileName') || '');
+  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || '');
+  const [profileEmail, setProfileEmail] = useState(() => localStorage.getItem('profileEmail') || '');
+  const [profilePhone, setProfilePhone] = useState(() => localStorage.getItem('profilePhone') || '');
+  const [profileLinkedIn, setProfileLinkedIn] = useState(() => localStorage.getItem('profileLinkedIn') || '');
+  const [profileLinkedInText, setProfileLinkedInText] = useState(() => localStorage.getItem('profileLinkedInText') || '');
+
+  useEffect(() => {
+    localStorage.setItem('profileName', profileName);
+  }, [profileName]);
+
+  useEffect(() => {
+    localStorage.setItem('profileLocation', profileLocation);
+  }, [profileLocation]);
+
+  useEffect(() => {
+    localStorage.setItem('profileEmail', profileEmail);
+  }, [profileEmail]);
+
+  useEffect(() => {
+    localStorage.setItem('profilePhone', profilePhone);
+  }, [profilePhone]);
+
+  useEffect(() => {
+    localStorage.setItem('profileLinkedIn', profileLinkedIn);
+  }, [profileLinkedIn]);
+
+  useEffect(() => {
+    localStorage.setItem('profileLinkedInText', profileLinkedInText);
+  }, [profileLinkedInText]);
 
   useEffect(() => {
     localStorage.setItem('resumeText', resumeText);
@@ -793,11 +826,19 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
   const renderSection = (sectionId: string) => {
     switch (sectionId) {
       case 'header':
+        const personalInfo = {
+          name: profileName || masterResume.personal_info.name,
+          location: profileLocation || masterResume.personal_info.location,
+          email: profileEmail || masterResume.personal_info.email,
+          phone: profilePhone || masterResume.personal_info.phone,
+          linkedin: profileLinkedIn || masterResume.personal_info.linkedin,
+          linkedinText: profileLinkedInText
+        };
         return (
           <div 
             key="header"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'header' })}
-            className={`cursor-pointer transition-all rounded p-2 -m-2 mb-8 resume-section ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`cursor-pointer transition-all rounded p-2 -m-2 mb-2 resume-section ${activeSection === 'header' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('header').fontFamily, 
               textAlign: 'center',
@@ -808,19 +849,19 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               marginBottom: `${getSectionStyle('header').margin}px`,
             }}
           >
-            <h1 className="font-bold uppercase tracking-[0.2em] mb-3" style={{ fontSize: '26px' }}>
-              {masterResume.personal_info.name}
+            <h1 className="font-bold uppercase tracking-[0.2em] mb-1" style={{ fontSize: '26px' }}>
+              {personalInfo.name}
             </h1>
             <div className="font-semibold opacity-80 border-t-2 border-black/10 pt-3 flex justify-center items-center gap-x-4 gap-y-1 flex-wrap" style={{ fontSize: '11px', lineHeight: '1.2' }}>
-              <span className="whitespace-nowrap">{masterResume.personal_info.location}</span>
+              <span className="whitespace-nowrap">{personalInfo.location}</span>
               <span className="opacity-30">|</span>
-              <span className="whitespace-nowrap">{masterResume.personal_info.email}</span>
+              <span className="whitespace-nowrap">{personalInfo.email}</span>
               <span className="opacity-30">|</span>
-              <span className="whitespace-nowrap">{masterResume.personal_info.phone}</span>
-              {masterResume.personal_info.linkedin && (
+              <span className="whitespace-nowrap">{personalInfo.phone}</span>
+              {personalInfo.linkedin && (
                 <>
                   <span className="opacity-30">|</span>
-                  <span className="whitespace-nowrap">LinkedIn: {masterResume.personal_info.linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</span>
+                  <span className="whitespace-nowrap">LinkedIn: {personalInfo.linkedinText || personalInfo.linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</span>
                 </>
               )}
             </div>
@@ -831,7 +872,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           <div 
             key="summary"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'summary' })}
-            className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'summary' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('summary').fontFamily, 
               textAlign: 'justify',
@@ -843,7 +884,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               fontSize: `${getSectionStyle('summary').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-2 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Professional Summary
             </h2>
             <p className="opacity-90 leading-relaxed">{results[activeAudience!]?.summary || masterResume.professional_summary_base}</p>
@@ -854,7 +895,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           <div 
             key="skills"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'skills' })}
-            className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'skills' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('skills').fontFamily, 
               lineHeight: getSectionStyle('skills').lineHeight,
@@ -865,7 +906,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               fontSize: `${getSectionStyle('skills').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-3 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Core Competencies
             </h2>
             {results[activeAudience!]?.skills && !Array.isArray(results[activeAudience!].skills) ? (
@@ -909,7 +950,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           <div 
             key="certifications"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'certifications' })}
-            className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'certifications' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('certifications').fontFamily, 
               lineHeight: getSectionStyle('certifications').lineHeight,
@@ -920,7 +961,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               fontSize: `${getSectionStyle('certifications').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-3 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Professional Certifications
             </h2>
             <div className="grid grid-cols-1 gap-1">
@@ -938,7 +979,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           <div 
             key="experience"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'experience' })}
-            className={`cursor-pointer transition-all rounded p-2 -m-2 mb-6 resume-section ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`cursor-pointer transition-all rounded p-2 -m-2 mb-2 resume-section ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('experience').fontFamily, 
               lineHeight: getSectionStyle('experience').lineHeight,
@@ -949,13 +990,13 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               fontSize: `${getSectionStyle('experience').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-4 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Professional Experience
             </h2>
             {(() => {
               const allExp = results[activeAudience!]?.experience || masterResume.experience;
               return allExp.map((exp, i) => (
-                <div key={i} className="mb-5 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
+                <div key={i} className="mb-3 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                   <div className="flex justify-between font-bold items-baseline mb-0.5">
                     <span style={{ fontSize: '13px' }}>{exp.role}</span>
                     <span className="opacity-70 font-medium italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
@@ -980,7 +1021,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           <div 
             key="projects"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'projects' })}
-            className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'projects' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'projects' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('projects').fontFamily, 
               lineHeight: getSectionStyle('projects').lineHeight,
@@ -991,12 +1032,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               fontSize: `${getSectionStyle('projects').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-4 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Key Strategic Projects
             </h2>
-            <div className="space-y-5">
+            <div className="space-y-3">
               {results[activeAudience!].projects.map((proj, i) => (
-                <div key={i} className="mb-5 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
+                <div key={i} className="mb-3 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                   <div className="font-bold mb-1 text-emerald-700" style={{ fontSize: '13px' }}>
                     {typeof proj === 'string' ? proj : (proj as any).title}
                   </div>
@@ -1013,7 +1054,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           <div 
             key="education"
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'education' })}
-            className={`mb-6 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
+            className={`mb-2 cursor-pointer transition-all rounded p-2 -m-2 resume-section ${activeSection === 'education' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
               fontFamily: getSectionStyle('education').fontFamily, 
               lineHeight: getSectionStyle('education').lineHeight,
@@ -1024,11 +1065,11 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               fontSize: `${getSectionStyle('education').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-3 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Education
             </h2>
             {(results[activeAudience!]?.education || [masterResume.education]).map((edu, i) => (
-              <div key={i} className="mb-2 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
+              <div key={i} className="mb-1 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                 <div className="resume-bullet-item">
                   <div className="resume-bullet-dot" />
                   <span className="resume-bullet-text opacity-90 font-medium">
@@ -1077,7 +1118,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           >
             <div className="sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-2 md:p-4 border-b border-black/5 dark:border-white/10">
                     <div className="flex gap-1 p-1 bg-black/10 dark:bg-white/5 rounded-lg">
-                      {(['config', 'style', 'tools'] as const).map((tab) => (
+                      {(['config', 'profile', 'style', 'tools', 'guide'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab)}
@@ -1670,6 +1711,152 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                   </section>
                 </div>
               )}
+              {activeTab === 'profile' && (
+                <div className="space-y-6">
+                  <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
+                    <div className="flex items-center gap-2 mb-6">
+                      <Users className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                      <h2 className="font-semibold text-lg">Profile Overrides</h2>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Full Name</label>
+                        <input 
+                          type="text"
+                          placeholder={masterResume.personal_info.name}
+                          value={profileName}
+                          onChange={(e) => setProfileName(e.target.value)}
+                          className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                            isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Location</label>
+                        <input 
+                          type="text"
+                          placeholder={masterResume.personal_info.location}
+                          value={profileLocation}
+                          onChange={(e) => setProfileLocation(e.target.value)}
+                          className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                            isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Email Address</label>
+                        <input 
+                          type="email"
+                          placeholder={masterResume.personal_info.email}
+                          value={profileEmail}
+                          onChange={(e) => setProfileEmail(e.target.value)}
+                          className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                            isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Phone Number</label>
+                        <input 
+                          type="text"
+                          placeholder={masterResume.personal_info.phone}
+                          value={profilePhone}
+                          onChange={(e) => setProfilePhone(e.target.value)}
+                          className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                            isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">LinkedIn URL</label>
+                        <input 
+                          type="url"
+                          placeholder={masterResume.personal_info.linkedin}
+                          value={profileLinkedIn}
+                          onChange={(e) => setProfileLinkedIn(e.target.value)}
+                          className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                            isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                          }`}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">LinkedIn Display Text (Optional)</label>
+                        <input 
+                          type="text"
+                          placeholder="e.g. HarnishJariwala"
+                          value={profileLinkedInText}
+                          onChange={(e) => setProfileLinkedInText(e.target.value)}
+                          className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                            isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                          }`}
+                        />
+                        <p className="text-[9px] opacity-40 mt-1 italic">If empty, the end of the LinkedIn URL will be used.</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setProfileName('');
+                          setProfileLocation('');
+                          setProfileEmail('');
+                          setProfilePhone('');
+                          setProfileLinkedIn('');
+                          setProfileLinkedInText('');
+                        }}
+                        className="w-full py-2 text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        Reset to Defaults
+                      </button>
+                    </div>
+                  </section>
+                </div>
+              )}
+              {activeTab === 'guide' && (
+                <div className="space-y-6">
+                  <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
+                    <div className="flex items-center gap-2 mb-6">
+                      <HelpCircle className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                      <h2 className="font-semibold text-lg">User Guide</h2>
+                    </div>
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">1. Configuration</h3>
+                        <p className="text-[11px] leading-relaxed opacity-70">
+                          Start by uploading your current resume (PDF) or use the default Master Resume. Paste the Job Description of the role you're targeting. Select your target role and optimization mode.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">2. Profile Customization</h3>
+                        <p className="text-[11px] leading-relaxed opacity-70">
+                          Use the <strong>Profile</strong> tab to override your personal details. You can even set a custom display text for your LinkedIn link to keep it clean (e.g., "HarnishJariwala" instead of the full URL).
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">3. Optimization</h3>
+                        <p className="text-[11px] leading-relaxed opacity-70">
+                          Click <strong>Optimize Resume</strong> to let the AI rewrite your resume. It will align your skills and experience with the job description while maintaining a professional 2-page layout.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">4. Advanced Tools</h3>
+                        <p className="text-[11px] leading-relaxed opacity-70">
+                          Check the <strong>Tools</strong> tab for:
+                          <ul className="list-disc list-inside mt-1 space-y-1">
+                            <li><strong>Gap Analysis:</strong> See which skills are missing.</li>
+                            <li><strong>Interview Prep:</strong> Generate likely interview questions.</li>
+                            <li><strong>Cover Letter:</strong> Create a tailored cover letter instantly.</li>
+                            <li><strong>Versions:</strong> Save and restore different versions of your resume.</li>
+                          </ul>
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">5. Styling & Export</h3>
+                        <p className="text-[11px] leading-relaxed opacity-70">
+                          Customize fonts, colors, and layout in the <strong>Style</strong> tab. Once satisfied, use the <strong>Download PDF</strong> button to save your professional resume.
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              )}
               {activeTab === 'style' && (
                 <div className="space-y-6">
                   {/* Resume Structure */}
@@ -1894,6 +2081,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                   <AdditionalTools 
                     resumeText={getEffectiveResumeText()}
                     jobDescription={jobDescription}
+                    targetRole={targetRole}
                     isDarkMode={isDarkMode}
                     engineConfig={engineConfig}
                     selectedEngine={selectedEngine as any}
@@ -2143,11 +2331,11 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     </div>
 
                     {/* Bottom Download Button */}
-                    <div className="p-4 border-t border-white/10 flex justify-center bg-white/5">
+                    <div className="p-2 border-t border-white/10 flex justify-center bg-white/5">
                       <button 
                         onClick={downloadPDF}
                         disabled={isDownloading}
-                        className="px-8 py-3 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all transform hover:scale-105 font-bold uppercase tracking-widest flex items-center gap-3 shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:hover:scale-100"
+                        className="px-6 py-2 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all transform hover:scale-105 font-bold uppercase tracking-widest flex items-center gap-3 shadow-lg shadow-emerald-500/20 disabled:opacity-50 disabled:hover:scale-100"
                       >
                         {isDownloading ? (
                           <>

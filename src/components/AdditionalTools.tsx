@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions } from '../services/geminiService';
+import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download } from 'lucide-react';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter } from '../services/geminiService';
 
 interface AdditionalToolsProps {
   resumeText: string;
   jobDescription: string;
+  targetRole: string;
   isDarkMode: boolean;
   engineConfig: Record<string, any>;
   selectedEngine: EngineType;
@@ -15,21 +16,24 @@ interface AdditionalToolsProps {
 export const AdditionalTools: React.FC<AdditionalToolsProps> = ({ 
   resumeText, 
   jobDescription, 
+  targetRole,
   isDarkMode, 
   engineConfig, 
   selectedEngine,
   onRestore,
   currentResults
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history'>('skillGap');
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter'>('skillGap');
   const [skillGap, setSkillGap] = useState<{missing: string[], present: string[]} | null>(null);
   const [interviewQuestions, setInterviewQuestions] = useState<string[]>([]);
+  const [coverLetter, setCoverLetter] = useState<string>('');
   const [history, setHistory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
+  const [saveName, setSaveName] = useState('');
 
   useEffect(() => {
     const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
@@ -94,12 +98,41 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(false);
   };
 
+  const runCoverLetter = async () => {
+    if (!resumeText || !jobDescription) {
+      setError("Please ensure both resume and job description are provided.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    try {
+      const result = await generateCoverLetter(jobDescription, resumeText, targetRole, {
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
+      });
+      setCoverLetter(result);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to generate cover letter.");
+    }
+    setIsLoading(false);
+  };
+
   const saveVersion = () => {
     const timestamp = new Date().toISOString();
     const newVersion = { 
       id: Date.now(), 
       timestamp,
-      name: `Version ${new Date(timestamp).toLocaleString()}`,
+      name: saveName || `Version ${new Date(timestamp).toLocaleString()}`,
       data: { 
         resumeText, 
         jobDescription,
@@ -109,6 +142,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     const newHistory = [newVersion, ...history].slice(0, 10);
     setHistory(newHistory);
     localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
+    setSaveName('');
   };
 
   const renameVersion = (id: number) => {
@@ -149,6 +183,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
         >
           <Brain className="w-4 h-4"/>
           Interview
+        </button>
+        <button 
+          onClick={() => setActiveTab('coverLetter')} 
+          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'coverLetter' 
+              ? 'bg-emerald-500 text-black' 
+              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+          }`}
+        >
+          <FileText className="w-4 h-4"/>
+          Cover Letter
         </button>
         <button 
           onClick={() => setActiveTab('history')} 
@@ -230,14 +275,55 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
         </div>
       )}
 
-      {activeTab === 'history' && (
+      {activeTab === 'coverLetter' && (
         <div className="space-y-4">
           <button 
-            onClick={saveVersion} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-2 rounded-lg text-xs transition-colors"
+            onClick={runCoverLetter} 
+            disabled={isLoading} 
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-2 rounded-lg text-xs transition-colors"
           >
-            Save Current Version
+            {isLoading ? 'Generating...' : 'Generate Cover Letter'}
           </button>
+          {coverLetter && (
+            <div className="space-y-2">
+              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                {coverLetter}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(coverLetter);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
+                >
+                  <Copy className="w-3 h-3" />
+                  Copy Text
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'history' && (
+        <div className="space-y-4">
+          <div className="flex gap-2">
+            <input 
+              type="text"
+              placeholder="Version name (e.g. Perfect Version)"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              className={`flex-1 px-3 py-2 text-[10px] border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-gray-50 border-black/5 text-black'
+              }`}
+            />
+            <button 
+              onClick={saveVersion} 
+              className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-2 rounded-lg text-[10px] transition-colors whitespace-nowrap"
+            >
+              Save Version
+            </button>
+          </div>
           <div className="space-y-2">
             {history.length === 0 ? (
               <p className={`text-center text-[10px] py-8 ${isDarkMode ? 'opacity-40' : 'opacity-60'}`}>No saved versions yet.</p>

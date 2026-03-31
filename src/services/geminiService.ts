@@ -580,3 +580,57 @@ export async function generateInterviewQuestions(
 
   throw new Error(`Unsupported engine: ${routedConfig.engine}`);
 }
+
+export async function generateCoverLetter(
+  jobDescription: string,
+  resumeText: string,
+  targetRole: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('cover_letter', config);
+  const prompt = `
+      You are an expert career coach and professional writer.
+      Write a high-impact, persuasive cover letter for the following job description and candidate resume.
+      The cover letter should be professional, concise (max 300-400 words), and specifically highlight how the candidate's experience aligns with the job requirements.
+      Focus on the value the candidate brings to the company.
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+      TARGET ROLE: ${targetRole}
+      
+      Return the cover letter as a plain text string. Do not include any extra conversational text.
+    `;
+
+  if (routedConfig.engine === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
+    const tools = [];
+    if (jobDescription.startsWith('http') || resumeText.startsWith('http')) {
+      tools.push({ urlContext: {} });
+    }
+
+    const response = await ai.models.generateContent({
+      model: routedConfig.model,
+      contents: prompt,
+      config: {
+        tools: tools.length > 0 ? tools : undefined,
+      }
+    });
+    return response.text || "";
+  } else if (routedConfig.engine === 'openai') {
+    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
+    }
+    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+    const response = await openai.chat.completions.create({
+      model: routedConfig.model,
+      messages: [
+        { role: "system", content: "You are a professional career coach." },
+        { role: "user", content: prompt }
+      ]
+    });
+    return response.choices[0].message.content || "";
+  }
+
+  throw new Error(`Unsupported engine: ${routedConfig.engine}`);
+}
