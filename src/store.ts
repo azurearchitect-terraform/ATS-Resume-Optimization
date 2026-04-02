@@ -33,16 +33,17 @@ interface ResumeStore {
 export const useResumeStore = create<ResumeStore>((set, get) => ({
   data: {
     personal_info: { 
-      name: 'John Doe', 
-      email: 'john@example.com', 
-      phone: '+1 234 567 890', 
-      location: 'San Francisco, CA', 
-      summary: 'Experienced Cloud Architect with a focus on Azure and DevOps.' 
+      name: '',
+      email: '',
+      phone: '',
+      location: '',
+      summary: ''
     },
     experience: [],
     skills: [],
     education: [],
     projects: [],
+    certifications: []
   },
   template: TEMPLATES.azureArchitect as unknown as ResumeTemplate,
   pages: [],

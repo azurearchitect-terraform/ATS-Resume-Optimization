@@ -1,0 +1,36 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Stores user profile data including encrypted API key and master resume.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique identifier for the user."
+        },
+        "encryptedApiKey": {
+          "type": "string",
+          "description": "The user's API key, encrypted by the backend."
+        },
+        "masterResume": {
+          "type": "string",
+          "description": "The user's master resume data."
+        },
+        "updatedAt": {
+          "type": "timestamp",
+          "description": "When the profile was last updated."
+        }
+      },
+      "required": ["userId", "encryptedApiKey", "masterResume"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Collection of user profiles."
+    }
+  }
+}

@@ -1,0 +1,74 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - userId: string (required) - The unique identifier for the user.
+    //   - encryptedApiKey: string (required) - The user's API key, encrypted by the backend.
+    //   - masterResume: string (required) - The user's master resume data.
+    //   - updatedAt: timestamp (optional) - When the profile was last updated.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user owns the resource (for user-owned documents)
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Domain Validator for UserProfile
+    function isValidUserProfile(data, userId) {
+      return hasOnlyAllowedFields(['userId', 'encryptedApiKey', 'masterResume', 'updatedAt']) &&
+             data.userId is string && data.userId == userId &&
+             data.encryptedApiKey is string && data.encryptedApiKey.size() < 2000 &&
+             data.masterResume is string && data.masterResume.size() < 500000 &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Users can only read their own profile
+      allow read: if isOwner(userId);
+      
+      // Users can create their own profile
+      allow create: if isOwner(userId) && 
+                    hasRequiredFields(['userId', 'encryptedApiKey', 'masterResume']) &&
+                    isValidUserProfile(request.resource.data, userId);
+                    
+      // Users can update their own profile
+      allow update: if isOwner(userId) && 
+                    hasRequiredFields(['userId', 'encryptedApiKey', 'masterResume']) &&
+                    isValidUserProfile(request.resource.data, userId);
+                    
+      // Users can delete their own profile
+      allow delete: if isOwner(userId);
+    }
+  }
+}

@@ -4,6 +4,13 @@ import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
 
 export interface OptimizationResult {
+  personal_info: {
+    name: string;
+    location: string;
+    email: string;
+    phone: string;
+    linkedin: string;
+  };
   summary: string;
   skills: {
     Infrastructure: string[];
@@ -40,7 +47,7 @@ export type EngineType = 'gemini' | 'openai';
 export interface EngineConfig {
   engine: EngineType;
   model: string;
-  apiKey?: string;
+  apiKey?: string; // This will now hold the encrypted API key
 }
 
 function extractJson(text: string): string {
@@ -78,6 +85,32 @@ function extractJson(text: string): string {
   }
 }
 
+async function callBackendAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
+  if (!encryptedKey) {
+    throw new Error("API Key is missing. Please save your profile first.");
+  }
+
+  const response = await fetch('/api/optimize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      model,
+      engine,
+      encryptedKey
+    })
+  });
+
+  if (!response.ok) {
+    const errData = await response.json();
+    const errorMessage = errData.details || errData.error || "Backend AI Call Failed";
+    throw new Error(errorMessage);
+  }
+
+  const data = await response.json();
+  return data;
+}
+
 export async function fetchJobDescription(url: string, config: RouterConfig): Promise<string> {
   const routedConfig = routeTask('extract_job_description', config);
   const prompt = `
@@ -90,31 +123,8 @@ JOB URL: ${url}
 `;
 
   try {
-    if (routedConfig.engine === 'openai') {
-      const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        throw new Error("OpenAI API Key is missing.");
-      }
-      const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-      const response = await openai.chat.completions.create({
-        model: routedConfig.model,
-        messages: [
-          { role: "system", content: "You are a professional job description extractor." },
-          { role: "user", content: prompt }
-        ]
-      });
-      return response.choices[0].message.content || "";
-    } else {
-      const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
-      const response = await ai.models.generateContent({
-        model: routedConfig.model,
-        contents: prompt,
-        config: {
-          tools: [{ urlContext: {} }],
-        }
-      });
-      return response.text || "";
-    }
+    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return data.result || "";
   } catch (error) {
     console.error("Error fetching job description:", error);
     throw error;
@@ -154,7 +164,8 @@ TASK:
 2. Optimize experience with impactful bullet points
 3. Balance content across 2 pages
 4. Ensure proper section distribution
-${recruiterSimulationMode ? '5. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
+5. Extract and format personal information (Name, Location, Email, Phone, LinkedIn)
+${recruiterSimulationMode ? '6. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
 
 FORMAT:
 * Clean professional formatting
@@ -177,9 +188,8 @@ CRITICAL ISSUES TO RESOLVE:
 * Every role must have at least 3 high-impact bullet points.
 * Include quantifiable metrics (e.g., %, $, time saved) naturally where they make sense, but do not force them into every bullet to keep it looking normal.
 
-2. EDUCATION PARADOX:
-* The candidate is completing BCA in 2027 despite senior experience.
-* Reframe as: "Continuing Education" or "Degree in Progress".
+2. EDUCATION:
+* If a degree is in progress, reframe as: "Continuing Education" or "Degree in Progress".
 * Maintain credibility and professionalism.
 
 3. TITLE ALIGNMENT:
@@ -190,10 +200,6 @@ CRITICAL ISSUES TO RESOLVE:
 * Do NOT include lines, separators, or styling text.
 * Skills must be grouped logically for grid display: Infrastructure, DevSecOps, Governance, Observability.
 * Keep skills short (1–3 words).
-
-5. SPECIFIC USER CONSTRAINTS:
-* The candidate has very little to no experience with CI/CD, Terraform, and DevOps.
-* Do NOT focus heavily on these areas. Only include basic knowledge if absolutely necessary, but do not exaggerate or invent experience in these domains.
 
 LAYOUT-SAFE CONTENT RULES (MANDATORY):
 - SUMMARY: Minimum 4-5 strong lines, leadership-focused.
@@ -224,6 +230,8 @@ RECRUITER SIMULATION MODE: ${recruiterSimulationMode}
 5. Ensure ATS keyword density is improved naturally.
 6. Calculate approximate optimized match score (0–100).
 ${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
+
+Return the result in the following JSON format: { "personal_info": { "name": string, "location": string, "email": string, "phone": string, "linkedin": string }, "summary": string, "skills": { "Infrastructure": string[], "DevSecOps": string[], "Governance": string[], "Observability": string[] }, "experience": { "role": string, "company": string, "duration": string, "bullets": string[] }[], "projects": { "title": string, "description": string }[], "education": string[], "certifications": string[], "ats_keywords_from_jd": string[], "ats_keywords_added_to_resume": string[], "keyword_gap": string[], "match_score": number, "baseline_score": number, "improvement_notes": string[], "audience_alignment_notes": string, "rejection_reasons": string[] }
 `;
 
   const maxRetries = 5;
@@ -232,125 +240,19 @@ ${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume
 
   while (retryCount <= maxRetries) {
     try {
-      let resultText = "";
-
-      if (routedConfig.engine === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
-        const tools = [];
-        if (jobUrl || linkedInUrl) {
-          tools.push({ urlContext: {} });
-        }
-
-        const response = await ai.models.generateContent({
-          model: currentModel,
-          contents: prompt,
-          config: {
-            maxOutputTokens: 8192,
-            tools: tools.length > 0 ? tools : undefined,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                summary: { type: Type.STRING },
-                skills: {
-                  type: Type.OBJECT,
-                  properties: {
-                    Infrastructure: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    DevSecOps: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    Governance: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    Observability: { type: Type.ARRAY, items: { type: Type.STRING } }
-                  },
-                  required: ["Infrastructure", "DevSecOps", "Governance", "Observability"]
-                },
-                experience: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      role: { type: Type.STRING },
-                      company: { type: Type.STRING },
-                      duration: { type: Type.STRING },
-                      bullets: { type: Type.ARRAY, items: { type: Type.STRING } }
-                    },
-                    required: ["role", "company", "bullets"]
-                  }
-                },
-                certifications: { type: Type.ARRAY, items: { type: Type.STRING } },
-                projects: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      description: { type: Type.STRING }
-                    },
-                    required: ["title", "description"]
-                  }
-                },
-                education: { type: Type.ARRAY, items: { type: Type.STRING } },
-                ats_keywords_from_jd: { type: Type.ARRAY, items: { type: Type.STRING } },
-                ats_keywords_added_to_resume: { type: Type.ARRAY, items: { type: Type.STRING } },
-                keyword_gap: { type: Type.ARRAY, items: { type: Type.STRING } },
-                match_score: { type: Type.NUMBER },
-                baseline_score: { type: Type.NUMBER },
-                improvement_notes: { type: Type.ARRAY, items: { type: Type.STRING } },
-                audience_alignment_notes: { type: Type.STRING },
-                rejection_reasons: { type: Type.ARRAY, items: { type: Type.STRING } }
-              },
-              required: [
-                "summary", "skills", "experience", "certifications", "projects", "education",
-                "ats_keywords_from_jd", "ats_keywords_added_to_resume", "keyword_gap", 
-                "match_score", "baseline_score", "improvement_notes", "audience_alignment_notes"
-              ]
-            }
-          }
-        });
-        
-        resultText = extractJson(response.text || "");
-        const usage = response.usageMetadata;
-        
-        if (!resultText) {
-          console.error("Empty response from Gemini");
-          throw new Error("The AI returned an empty response. Please try again.");
-        }
-
-        try {
-          const parsed = JSON.parse(resultText);
-          if (usage) {
-            parsed._usage = {
-              promptTokenCount: usage.promptTokenCount || 0,
-              candidatesTokenCount: usage.candidatesTokenCount || 0,
-              totalTokenCount: usage.totalTokenCount || 0
-            };
-          }
-          return parsed;
-        } catch (e) {
-          console.error("Error parsing Gemini response:", e, "Raw text:", resultText);
-          throw new Error("JSON_PARSING_ERROR: The AI returned an invalid response format.");
-        }
-      } else if (routedConfig.engine === 'openai') {
-        const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
-        if (!apiKey) {
-          throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
-        }
-        const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-        const response = await openai.chat.completions.create({
-          model: currentModel,
-          messages: [
-            { role: "system", content: "You are a professional resume optimization engine. Return ONLY valid JSON." },
-            { role: "user", content: prompt + "\n\nReturn the result in the following JSON format: { summary: string, skills: { Infrastructure: string[], DevSecOps: string[], Governance: string[], Observability: string[] }, experience: { role: string, company: string, duration: string, bullets: string[] }[], projects: { title: string, description: string }[], education: string[], certifications: string[], ats_keywords_from_jd: string[], ats_keywords_added_to_resume: string[], keyword_gap: string[], match_score: number, baseline_score: number, improvement_notes: string[], audience_alignment_notes: string, rejection_reasons: string[] }" }
-          ],
-          response_format: { type: "json_object" }
-        });
-        resultText = extractJson(response.choices[0].message.content || "");
-      }
+      const data = await callBackendAI(prompt, currentModel, routedConfig.engine, routedConfig.apiKey);
+      const resultText = extractJson(data.result || "");
 
       if (!resultText) {
         throw new Error(`No response from ${routedConfig.engine}`);
       }
 
       try {
-        return JSON.parse(resultText);
+        const parsed = JSON.parse(resultText);
+        if (data.usage) {
+          parsed._usage = data.usage;
+        }
+        return parsed;
       } catch (e) {
         console.error(`Error parsing ${routedConfig.engine} response:`, e, "Raw text:", resultText);
         throw new Error(`JSON_PARSING_ERROR: The ${routedConfig.engine} engine returned an invalid response format.`);
@@ -401,50 +303,14 @@ export async function analyzeSkillGap(
       JOB DESCRIPTION: ${jobDescription}
     `;
 
-  if (routedConfig.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
-    const tools = [];
-    if (jobDescription.startsWith('http') || resumeText.startsWith('http')) {
-      tools.push({ urlContext: {} });
-    }
-
-    const response = await ai.models.generateContent({
-      model: routedConfig.model,
-      contents: prompt,
-      config: {
-        tools: tools.length > 0 ? tools : undefined,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            missing: { type: Type.ARRAY, items: { type: Type.STRING } },
-            present: { type: Type.ARRAY, items: { type: Type.STRING } }
-          },
-          required: ["missing", "present"]
-        }
-      }
-    });
-    const resultText = extractJson(response.text || "");
+  try {
+    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
     return JSON.parse(resultText || '{"missing":[], "present":[]}');
-  } else if (routedConfig.engine === 'openai') {
-    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
-    }
-    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-    const response = await openai.chat.completions.create({
-      model: routedConfig.model,
-      messages: [
-        { role: "system", content: "You are a professional resume analyzer. Return ONLY valid JSON." },
-        { role: "user", content: prompt }
-      ],
-      response_format: { type: "json_object" }
-    });
-    const resultText = extractJson(response.choices[0].message.content || "");
-    return JSON.parse(resultText || '{"missing":[], "present":[]}');
+  } catch (error) {
+    console.error("Error analyzing skill gap:", error);
+    throw error;
   }
-  
-  throw new Error(`Unsupported engine: ${routedConfig.engine}`);
 }
 
 export async function analyzeBestAudiences(
@@ -473,55 +339,15 @@ export async function analyzeBestAudiences(
     TARGET ROLE: ${targetRole}
   `;
 
-  if (routedConfig.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
-    const tools = [];
-    if (jobDescription.startsWith('http')) {
-      tools.push({ urlContext: {} });
-    }
-
-    const response = await ai.models.generateContent({
-      model: routedConfig.model,
-      contents: prompt,
-      config: {
-        tools: tools.length > 0 ? tools : undefined,
-        responseMimeType: "application/json",
-      }
-    });
-    try {
-      const text = extractJson(response.text || "");
-      if (!text) return ['microsoft'];
-      const parsed = JSON.parse(text);
-      return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
-    } catch (e) {
-      console.error('Error parsing audiences from Gemini:', e);
-      return ['microsoft'];
-    }
-  } else if (routedConfig.engine === 'openai') {
-    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) return ['microsoft'];
-    
-    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-    const response = await openai.chat.completions.create({
-      model: routedConfig.model,
-      messages: [
-        { role: "system", content: "You are a professional resume analyzer. Return ONLY valid JSON array of audience IDs." },
-        { role: "user", content: prompt }
-      ],
-      response_format: { type: "json_object" }
-    });
-    try {
-      const content = extractJson(response.choices[0].message.content || "");
-      if (!content) return ['microsoft'];
-      const parsed = JSON.parse(content);
-      return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
-    } catch (e) {
-      console.error('Error parsing audiences from OpenAI:', e);
-      return ['microsoft'];
-    }
+  try {
+    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    const parsed = JSON.parse(resultText || '[]');
+    return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
+  } catch (error) {
+    console.error("Error analyzing best audiences:", error);
+    return ['microsoft'];
   }
-  
-  return ['microsoft'];
 }
 
 export async function generateInterviewQuestions(
@@ -538,47 +364,15 @@ export async function generateInterviewQuestions(
       RESUME: ${resumeText}
     `;
 
-  if (routedConfig.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
-    const tools = [];
-    if (jobDescription.startsWith('http') || resumeText.startsWith('http')) {
-      tools.push({ urlContext: {} });
-    }
-
-    const response = await ai.models.generateContent({
-      model: routedConfig.model,
-      contents: prompt,
-      config: {
-        tools: tools.length > 0 ? tools : undefined,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        }
-      }
-    });
-    const resultText = extractJson(response.text || "");
-    return JSON.parse(resultText || '[]');
-  } else if (routedConfig.engine === 'openai') {
-    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
-    }
-    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-    const response = await openai.chat.completions.create({
-      model: routedConfig.model,
-      messages: [
-        { role: "system", content: "You are a professional interview coach. Return ONLY valid JSON array of strings." },
-        { role: "user", content: prompt }
-      ],
-      response_format: { type: "json_object" }
-    });
-    const resultText = extractJson(response.choices[0].message.content || "");
-    const parsed = JSON.parse(resultText || '{}');
+  try {
+    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.questions || []);
+  } catch (error) {
+    console.error("Error generating interview questions:", error);
+    return [];
   }
-
-  throw new Error(`Unsupported engine: ${routedConfig.engine}`);
 }
 
 export async function generateCoverLetter(
@@ -601,36 +395,11 @@ export async function generateCoverLetter(
       Return the cover letter as a plain text string. Do not include any extra conversational text.
     `;
 
-  if (routedConfig.engine === 'gemini') {
-    const ai = new GoogleGenAI({ apiKey: routedConfig.apiKey || process.env.GEMINI_API_KEY || "" });
-    const tools = [];
-    if (jobDescription.startsWith('http') || resumeText.startsWith('http')) {
-      tools.push({ urlContext: {} });
-    }
-
-    const response = await ai.models.generateContent({
-      model: routedConfig.model,
-      contents: prompt,
-      config: {
-        tools: tools.length > 0 ? tools : undefined,
-      }
-    });
-    return response.text || "";
-  } else if (routedConfig.engine === 'openai') {
-    const apiKey = routedConfig.apiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OpenAI API Key is missing. Please provide it in the settings or as an environment variable (OPENAI_API_KEY).");
-    }
-    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-    const response = await openai.chat.completions.create({
-      model: routedConfig.model,
-      messages: [
-        { role: "system", content: "You are a professional career coach." },
-        { role: "user", content: prompt }
-      ]
-    });
-    return response.choices[0].message.content || "";
+  try {
+    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return data.result || "";
+  } catch (error) {
+    console.error("Error generating cover letter:", error);
+    return "";
   }
-
-  throw new Error(`Unsupported engine: ${routedConfig.engine}`);
 }

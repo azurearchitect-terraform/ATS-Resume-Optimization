@@ -5,6 +5,8 @@ export interface ResumeData {
     phone: string;
     location: string;
     summary: string;
+    linkedin?: string;
+    linkedinText?: string;
   };
   experience: Experience[];
   early_career?: string[];

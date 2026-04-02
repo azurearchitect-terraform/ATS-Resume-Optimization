@@ -40,8 +40,7 @@ import {
   useSortable
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { rewriteSectionWithAI, optimizeFullResume } from '../../services/aiService';
-import masterResume from '../../master-resume.json';
+import { rewriteSectionWithAI } from '../../services/aiService';
 
 interface SortableItemProps {
   id: string;
@@ -157,7 +156,10 @@ export const Sidebar = () => {
 
   const engines = [
     { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', desc: 'Fast & Efficient', icon: Zap },
+    { id: 'gemini-flash-latest', name: 'Gemini Flash Latest', desc: 'Latest Fast Model', icon: Zap },
     { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: 'Advanced Reasoning', icon: Cpu },
+    { id: 'gemini-3.1-flash-live-preview', name: 'Gemini 3 Flash Live', desc: 'Real-time & Multimodal', icon: Zap },
+    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3 Flash Lite', desc: 'Cost-effective', icon: Zap },
   ];
 
   return (

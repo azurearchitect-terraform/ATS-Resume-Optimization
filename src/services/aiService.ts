@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { optimizeResume } from "./geminiService";
 
 export const optimizeFullResume = async (
-  masterResume: any,
+  resumeData: any,
   jobDescription: string,
   targetRole: string,
   aiEngine: string = "gemini-3.1-pro-preview",
@@ -10,7 +10,7 @@ export const optimizeFullResume = async (
 ) => {
   try {
     const result = await optimizeResume(
-      JSON.stringify(masterResume),
+      JSON.stringify(resumeData),
       jobDescription,
       targetRole,
       "balanced",

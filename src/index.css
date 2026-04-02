@@ -215,8 +215,7 @@
   .resume-page {
     width: 210mm;
     min-width: 210mm;
-    min-height: 297mm;
-    height: auto;
+    min-height: 297mm; /* Minimum height for A4, allows growing */
     background-color: white;
     padding: 15mm;
     display: flex;
@@ -224,6 +223,22 @@
     box-sizing: border-box;
     position: relative;
     color: #1A1A1A;
+  }
+
+  /* When printing, ensure it breaks pages correctly */
+  @media print {
+    .resume-page {
+      min-height: auto;
+      height: auto;
+      display: block; /* Flex can sometimes mess up print pagination */
+    }
+    .resume-section {
+      /* Allow sections to break across pages */
+    }
+    .resume-item {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
   }
 
   .resume-section {

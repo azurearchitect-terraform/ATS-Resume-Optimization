@@ -1,28 +1,28 @@
 {
   "personal_info": {
     "name": "Harnish Jariwala",
-    "location": "Hyderabad, Telangana, India",
+    "location": "Surat, Gujarat, India",
     "current_work_location": "Hyderabad, Telangana",
-    "email": "param_jariwala@yahoo.com",
+    "email": "hackerharnish@gmail.com",
     "phone": "+91-8980161289",
     "linkedin": "https://linkedin.com/in/harnishjariwala"
   },
   "professional_summary_base": "Senior Cloud Infrastructure professional with 16 years of overall IT experience including 6+ years specializing in Microsoft Azure. Strong expertise in Azure architecture, hybrid cloud, high availability, disaster recovery, governance, monitoring, and cost optimization. Experienced designing and stabilizing enterprise-scale and regulated Azure environments across healthcare and SaaS domains.",
   "core_competencies": [
-    "Azure Cloud Architecture",
+    "Azure Infrastructure Architecture",
     "Azure Landing Zones",
-    "HA/DR & Business Continuity",
-    "Hybrid Cloud Networking",
-    "Identity & Access (Entra ID)",
+    "High Availability & Disaster Recovery (HA/DR)",
+    "Azure Networking & Hybrid Connectivity",
+    "Identity & Access Management (Entra ID, RBAC)",
     "Azure Governance & Policy",
-    "Backup & Site Recovery",
+    "Azure Backup & Site Recovery",
     "Monitoring & Observability",
-    "Cloud Cost Optimization",
+    "Cost Optimization & FinOps",
     "Hybrid Cloud Migrations",
-    "Incident Management",
-    "Enterprise Infrastructure",
-    "PowerShell Automation",
-    "Infrastructure-as-Code"
+    "Incident Management & Operational Resiliency",
+    "Windows Server & Enterprise Infrastructure",
+    "PowerShell & Azure Automation",
+    "Infrastructure-as-Code (Terraform - Working Exposure)"
   ],
   "experience": [
     {

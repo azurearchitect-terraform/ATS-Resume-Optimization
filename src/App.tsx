@@ -30,7 +30,8 @@ import {
   AlignRight,
   AlignJustify,
   Building,
-  HelpCircle
+  HelpCircle,
+  Maximize
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -42,9 +43,12 @@ import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
 import { optimizeResume, fetchJobDescription, analyzeBestAudiences, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
 import { RouterConfig } from './services/aiRouter';
-import masterResume from './services/masterResume.json';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+
+import { auth, db } from './firebase';
+import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 // Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -82,10 +86,150 @@ const MODEL_PRICING: Record<string, { input: number, output: number }> = {
   // Gemini
   'gemini-3.1-pro-preview': { input: 1.25, output: 5.00 },
   'gemini-3-flash-preview': { input: 0.075, output: 0.30 },
+  'gemini-flash-latest': { input: 0.075, output: 0.30 },
+  'gemini-3.1-flash-lite-preview': { input: 0.075, output: 0.30 },
 };
 
 export default function App() {
-  const [resumeText, setResumeText] = useState(() => localStorage.getItem('resumeText') || '');
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isApiKeySaved, setIsApiKeySaved] = useState(false);
+  const [encryptedApiKey, setEncryptedApiKey] = useState('');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        try {
+          const docRef = doc(db, 'users', currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.masterResume) {
+              setResumeText(data.masterResume);
+            }
+            if (data.encryptedApiKey) {
+              setEncryptedApiKey(data.encryptedApiKey);
+              setApiKey('••••••••••••••••'); // Placeholder
+              setOpenaiApiKey('••••••••••••••••'); // Placeholder
+              setIsApiKeySaved(true);
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching profile:", err);
+        }
+      } else {
+        setApiKey('');
+        setOpenaiApiKey('');
+        setEncryptedApiKey('');
+        setIsApiKeySaved(false);
+      }
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      console.error("Login Error:", err);
+      alert("Failed to login.");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error("Logout Error:", err);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) {
+      alert("Please login first.");
+      return;
+    }
+    if (!resumeText) {
+      alert("Please provide your master resume.");
+      return;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      let finalEncryptedKey = encryptedApiKey;
+
+      // If the user entered a new API key (not the placeholder)
+      if ((apiKey && apiKey !== '••••••••••••••••') || (openaiApiKey && openaiApiKey !== '••••••••••••••••')) {
+        const keysToEncrypt = JSON.stringify({
+          gemini: apiKey !== '••••••••••••••••' ? apiKey : '',
+          openai: openaiApiKey !== '••••••••••••••••' ? openaiApiKey : ''
+        });
+
+        const response = await fetch('/api/encrypt-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            apiKey: keysToEncrypt,
+            existingEncryptedKey: encryptedApiKey
+          })
+        });
+        if (!response.ok) throw new Error("Failed to encrypt API keys");
+        const data = await response.json();
+        finalEncryptedKey = data.encryptedKey;
+        setEncryptedApiKey(finalEncryptedKey);
+        if (apiKey) setApiKey('••••••••••••••••');
+        if (openaiApiKey) setOpenaiApiKey('••••••••••••••••');
+        setIsApiKeySaved(true);
+      }
+
+      await setDoc(doc(db, 'users', user.uid), {
+        userId: user.uid,
+        encryptedApiKey: finalEncryptedKey,
+        masterResume: resumeText,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      alert("Profile saved successfully!");
+    } catch (err) {
+      console.error("Error saving profile:", err);
+      alert("Failed to save profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleResetKeys = async () => {
+    if (!user) return;
+    if (!window.confirm("Are you sure you want to clear your saved API keys? You will need to re-enter them.")) return;
+    
+    try {
+      await setDoc(doc(db, 'users', user.uid), {
+        encryptedApiKey: "",
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      setApiKey('');
+      setOpenaiApiKey('');
+      setEncryptedApiKey('');
+      setIsApiKeySaved(false);
+      alert("API keys cleared successfully.");
+    } catch (err) {
+      console.error("Error resetting keys:", err);
+      alert("Failed to reset keys.");
+    }
+  };
+
+  const [resumeText, setResumeText] = useState(() => {
+    const saved = localStorage.getItem('resumeText');
+    if (saved) return saved;
+    
+    return "";
+  });
   const [jobDescription, setJobDescription] = useState('');
   const [activeTab, setActiveTab] = useState<'config' | 'style' | 'tools' | 'profile' | 'guide'>('config');
   const [targetRole, setTargetRole] = useState('');
@@ -96,6 +240,7 @@ export default function App() {
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
   const audienceDropdownRef = useRef<HTMLDivElement>(null);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -117,6 +262,7 @@ export default function App() {
   const { state: formattingState, dispatch: formattingDispatch } = useFormatting();
   const { activeSection, styles: sectionStyles } = formattingState;
   const { 
+    data,
     isOptimizing, 
     setIsOptimizing, 
     setData, 
@@ -196,42 +342,26 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // Initial data load from masterResume
-  useEffect(() => {
-    setData({
-      personal_info: {
-        ...masterResume.personal_info,
-        summary: masterResume.professional_summary_base
-      },
-      experience: masterResume.experience.map((e, i) => ({ ...e, id: `exp_${i}` })),
-      skills: masterResume.core_competencies,
-      education: [masterResume.education],
-      projects: masterResume.strategic_initiatives.map((p, i) => ({ 
-        title: p.split(' (')[0], 
-        description: p, 
-        isOptional: true as const 
-      })),
-      certifications: masterResume.certifications
-    });
-  }, [setData]);
-
   // Sync results with ResumeStore
   useEffect(() => {
     if (activeAudience && results[activeAudience]) {
       const res = results[activeAudience];
       setData({
         personal_info: {
-          ...masterResume.personal_info,
+          name: profileName,
+          location: profileLocation,
+          email: profileEmail,
+          phone: profilePhone,
           summary: res.summary
         },
         experience: res.experience.map((e, i) => ({ ...e, id: `exp_${i}` })),
         skills: res.skills as any, // Cast to any to handle both structures
         education: res.education as any,
         projects: res.projects?.map(p => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any,
-        certifications: res.certifications || masterResume.certifications
+        certifications: res.certifications || []
       });
     }
-  }, [activeAudience, results, setData]);
+  }, [activeAudience, results, setData, profileName, profileLocation, profileEmail, profilePhone]);
 
   const overflow = detectOverflow(pages);
   const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({});
@@ -250,13 +380,30 @@ export default function App() {
     return { ...DEFAULT_STYLE, ...style };
   };
 
-  const [configWidth, setConfigWidth] = useState(450);
-  const [isResizing, setIsResizing] = useState(false);
+  const [configWidth, setConfigWidth] = useState(40); // percentage
+  const [isResizingWidth, setIsResizingWidth] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const resetLayout = () => {
+    setConfigWidth(40);
+  };
 
   const [error, setError] = useState<string | null>(null);
   const [showModeInfo, setShowModeInfo] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [optimizationProgress, setOptimizationProgress] = useState(0);
+  const [optimizationStatus, setOptimizationStatus] = useState('');
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [tokenUsage, setTokenUsage] = useState(() => {
     const saved = localStorage.getItem('tokenUsage');
@@ -331,24 +478,42 @@ export default function App() {
 
   useEffect(() => {
     if (!previewContainerRef.current || !isAutoZoom) return;
+    
+    let animationFrameId: number;
+    
     const observer = new ResizeObserver((entries) => {
-      for (let entry of entries) {
-        const containerWidth = entry.contentRect.width;
-        const targetWidth = 794; // A4 width in px
-        const padding = 64; // 32px padding on each side
-        const availableWidth = containerWidth - padding;
-        
-        if (availableWidth < targetWidth) {
-          setZoom(availableWidth / targetWidth);
-        } else {
-          setZoom(1);
-        }
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
       }
+      
+      animationFrameId = requestAnimationFrame(() => {
+        for (let entry of entries) {
+          const containerWidth = entry.contentRect.width;
+          const targetWidth = 794; // A4 width in px
+          const padding = 64; // 32px padding on each side
+          const availableWidth = containerWidth - padding;
+          
+          if (availableWidth < targetWidth) {
+            setZoom(availableWidth / targetWidth);
+          } else {
+            setZoom(Math.min(1.5, availableWidth / targetWidth));
+          }
+        }
+      });
     });
 
     observer.observe(previewContainerRef.current);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
   }, [activeAudience, isAutoZoom]); // Re-run when audience or auto-zoom changes
+
+  useEffect(() => {
+    console.log("isOptimizing changed:", isOptimizing);
+  }, [isOptimizing]);
 
   const extractTextFromPDF = async (file: File) => {
     setIsExtracting(true);
@@ -437,15 +602,8 @@ export default function App() {
   const getEffectiveResumeText = () => {
     if (resumeText) return resumeText;
     
-    // Fallback to masterResume if no text uploaded
-    return `
-NAME: ${masterResume.personal_info.name}
-SUMMARY: ${masterResume.professional_summary_base}
-EXPERIENCE:
-${masterResume.experience.map(exp => `- ${exp.role} at ${exp.company} (${exp.duration}): ${exp.bullets.join(' ')}`).join('\n')}
-SKILLS: ${masterResume.core_competencies.join(', ')}
-EDUCATION: ${masterResume.education.degree} from ${masterResume.education.institution}
-    `;
+    // Fallback to empty if no text uploaded
+    return "";
   };
 
   const restoreVersion = (version: any) => {
@@ -467,12 +625,12 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
       geminiConfig: {
         engine: 'gemini',
         model: engineConfig.gemini.model,
-        apiKey: engineConfig.gemini.apiKey
+        apiKey: encryptedApiKey || engineConfig.gemini.apiKey
       },
       openaiConfig: {
         engine: 'openai',
         model: engineConfig.openai.model,
-        apiKey: engineConfig.openai.apiKey
+        apiKey: encryptedApiKey || engineConfig.openai.apiKey
       }
     };
   };
@@ -510,6 +668,7 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
 
   const handleOptimize = async () => {
     console.log("handleOptimize called");
+    setError("Optimization started...");
     if (!jobDescription && !jobUrl) {
       setError('Please provide a job description or job URL to optimize against.');
       return;
@@ -548,15 +707,36 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
     setError(null);
     setResults({});
     setActiveAudience(null);
+    setOptimizationProgress(0);
+    
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+    }
+    progressIntervalRef.current = setInterval(() => {
+      setOptimizationProgress(prev => {
+        if (prev < 30) return prev + Math.floor(Math.random() * 3) + 1;
+        if (prev < 60) return prev + Math.floor(Math.random() * 2) + 1;
+        if (prev < 85) return prev + 1;
+        if (prev < 95) return prev + (Math.random() > 0.5 ? 1 : 0);
+        if (prev < 98) return prev + (Math.random() > 0.8 ? 1 : 0);
+        return prev;
+      });
+    }, 200);
+    
+    const engineName = selectedEngine === 'production' ? 'Hybrid Mode (Gemini + OpenAI)' : selectedEngine.toUpperCase();
+    setOptimizationStatus(`Initializing ${engineName}...`);
 
     const controller = new AbortController();
     setAbortController(controller);
 
     try {
-      const finalResumeText = resumeText || JSON.stringify(masterResume, null, 2);
+      const finalResumeText = resumeText || "";
       const finalTargetRole = targetRole || "Professional Candidate";
       
       const routerConfig = getRouterConfig();
+      let completedAudiences = 0;
+      const totalAudiences = currentAudiences.length;
+      const engineName = selectedEngine === 'production' ? 'Hybrid Mode (Gemini + OpenAI)' : selectedEngine.toUpperCase();
 
       // Run all audience optimizations in parallel
       await Promise.all(currentAudiences.map(async (audienceId) => {
@@ -564,6 +744,8 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
         
         try {
           const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
+          setOptimizationStatus(`Optimizing for ${audienceLabel} using ${engineName}...`);
+          
           const data = await optimizeResume(
             finalResumeText, 
             jobDescription, 
@@ -577,6 +759,8 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
             fastMode, 
             recruiterSimulationMode
           );
+          
+          completedAudiences++;
           
           // Update token usage
           if (data._usage) {
@@ -620,9 +804,19 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
         console.log('Optimization aborted');
       } else {
         console.error(err);
-        setError('Failed to optimize resume. Please try again.');
+        const errorMessage = err.message || 'Failed to optimize resume. Please try again.';
+        if (errorMessage.includes('DECRYPTION_FAILED')) {
+          setError('Your session or encryption key has changed. Please go to the Profile tab and re-save your API keys.');
+        } else {
+          setError(errorMessage);
+        }
       }
     } finally {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      setOptimizationProgress(100);
       setIsOptimizing(false);
       setAbortController(null);
     }
@@ -631,6 +825,10 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
   const handleStop = () => {
     if (abortController) {
       abortController.abort();
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
       setIsOptimizing(false);
       setAbortController(null);
     }
@@ -651,8 +849,8 @@ EDUCATION: ${masterResume.education.degree} from ${masterResume.education.instit
     const projectsText = res.projects?.map(p => typeof p === 'string' ? p : `${p.title}: ${p.description}`).join('\n');
 
     const text = `
-${masterResume.personal_info.name}
-${masterResume.personal_info.location} | ${masterResume.personal_info.email} | ${masterResume.personal_info.phone}
+${profileName}
+${profileLocation} | ${profileEmail} | ${profilePhone}
 
 PROFESSIONAL SUMMARY
 ${res.summary}
@@ -670,10 +868,10 @@ ${exp.bullets.join('\n')}
 ${projectsText ? `PROJECTS\n${projectsText}\n` : ''}
 
 CERTIFICATIONS
-${(res.certifications || masterResume.certifications).join('\n')}
+${(res.certifications || [] as string[]).join('\n')}
 
 EDUCATION
-${(res.education || [masterResume.education]).map(edu => typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected ${edu.expected_completion})`).join('\n')}
+${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected ${edu.expected_completion})`).join('\n')}
     `.trim();
     
     navigator.clipboard.writeText(text);
@@ -681,9 +879,10 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
   };
 
   const leftPanelRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsResizing(true);
+  const handleMouseDownDivider = (e: React.MouseEvent) => {
+    setIsResizingWidth(true);
     e.preventDefault();
   };
 
@@ -691,24 +890,27 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
     let animationFrameId: number;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing || !leftPanelRef.current) return;
+      if (!isResizingWidth || !containerRef.current) return;
       
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
       
       animationFrameId = requestAnimationFrame(() => {
-        const rect = leftPanelRef.current!.getBoundingClientRect();
-        const newWidth = Math.max(300, Math.min(800, e.clientX - rect.left));
-        setConfigWidth(newWidth);
+        if (isResizingWidth) {
+          const rect = containerRef.current!.getBoundingClientRect();
+          const newWidthPx = e.clientX - rect.left;
+          const newWidthPercent = (newWidthPx / rect.width) * 100;
+          setConfigWidth(Math.max(20, Math.min(60, newWidthPercent)));
+        }
       });
     };
 
     const handleMouseUp = () => {
-      setIsResizing(false);
+      setIsResizingWidth(false);
     };
 
-    if (isResizing) {
+    if (isResizingWidth) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp, { capture: true });
       document.body.style.cursor = 'col-resize';
@@ -724,7 +926,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [isResizing]);
+  }, [isResizingWidth]);
 
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -826,12 +1028,12 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
   const renderSection = (sectionId: string) => {
     switch (sectionId) {
       case 'header':
-        const personalInfo = {
-          name: profileName || masterResume.personal_info.name,
-          location: profileLocation || masterResume.personal_info.location,
-          email: profileEmail || masterResume.personal_info.email,
-          phone: profilePhone || masterResume.personal_info.phone,
-          linkedin: profileLinkedIn || masterResume.personal_info.linkedin,
+        const personalInfo: any = results[activeAudience!]?.personal_info || {
+          name: profileName || data.personal_info.name,
+          location: profileLocation || data.personal_info.location,
+          email: profileEmail || data.personal_info.email,
+          phone: profilePhone || data.personal_info.phone,
+          linkedin: profileLinkedIn || data.personal_info.linkedin,
           linkedinText: profileLinkedInText
         };
         return (
@@ -887,7 +1089,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Professional Summary
             </h2>
-            <p className="opacity-90 leading-relaxed">{results[activeAudience!]?.summary || masterResume.professional_summary_base}</p>
+            <p className="opacity-90 leading-relaxed">{results[activeAudience!]?.summary || data.personal_info.summary}</p>
           </div>
         );
       case 'skills':
@@ -918,9 +1120,9 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                   </div>
                 ))}
               </div>
-            ) : typeof masterResume.core_competencies === 'object' && !Array.isArray(masterResume.core_competencies) ? (
+            ) : typeof data.skills === 'object' && !Array.isArray(data.skills) ? (
               <div className="flex flex-col gap-1.5">
-                {Object.entries(masterResume.core_competencies).map(([category, items]) => (
+                {Object.entries(data.skills as any).map(([category, items]) => (
                   <div key={category} className="text-[11px] leading-tight">
                     <span className="font-bold uppercase text-emerald-700 mr-2">{category}:</span>
                     <span className="opacity-90">{(items as unknown as string[]).join(' • ')}</span>
@@ -934,7 +1136,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     ? (Array.isArray(results[activeAudience].skills) 
                         ? results[activeAudience].skills 
                         : Object.values(results[activeAudience].skills).flat())
-                    : masterResume.core_competencies
+                    : data.skills
                 ) as string[]).map((s, i) => (
                   <li key={i} className="flex items-start gap-2 text-[11px] opacity-90 leading-tight">
                     <span className="mt-1.5 w-1 h-1 bg-black rounded-full shrink-0 opacity-60"></span>
@@ -965,7 +1167,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               Professional Certifications
             </h2>
             <div className="grid grid-cols-1 gap-1">
-              {(results[activeAudience!]?.certifications || masterResume.certifications).map((cert, i) => (
+              {(results[activeAudience!]?.certifications || data.certifications || []).map((cert, i) => (
                 <div key={i} className="resume-bullet-item">
                   <div className="resume-bullet-dot" />
                   <span className="resume-bullet-text opacity-90 font-medium">{cert}</span>
@@ -994,7 +1196,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               Professional Experience
             </h2>
             {(() => {
-              const allExp = results[activeAudience!]?.experience || masterResume.experience;
+              const allExp = results[activeAudience!]?.experience || data.experience;
               return allExp.map((exp, i) => (
                 <div key={i} className="mb-3 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                   <div className="flex justify-between font-bold items-baseline mb-0.5">
@@ -1068,7 +1270,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Education
             </h2>
-            {(results[activeAudience!]?.education || [masterResume.education]).map((edu, i) => (
+            {(results[activeAudience!]?.education || data.education || []).map((edu, i) => (
               <div key={i} className="mb-1 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                 <div className="resume-bullet-item">
                   <div className="resume-bullet-dot" />
@@ -1086,10 +1288,10 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
   };
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 overflow-x-hidden ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-[#F5F5F5] text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
+    <div className={`min-h-screen transition-colors duration-300 overflow-x-hidden ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-white text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
       {/* Header */}
       <header className={`border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-[#0A0A0A]/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="w-full px-4 md:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isDarkMode ? 'bg-emerald-500' : 'bg-black'}`}>
               <Cpu className={`w-5 h-5 ${isDarkMode ? 'text-black' : 'text-emerald-400'}`} />
@@ -1097,6 +1299,13 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             <span className="font-bold text-xl tracking-tight">ATS.OPTIMIZER</span>
           </div>
           <div className="flex items-center gap-4">
+            <button 
+              onClick={resetLayout}
+              className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`}
+              title="Reset Layout"
+            >
+              <Maximize className="w-5 h-5" />
+            </button>
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
               className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-amber-400' : 'hover:bg-black/5 text-blue-600'}`}
@@ -1108,23 +1317,35 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
         </div>
       </header>
 
-      <div className="w-full max-w-7xl mx-auto px-4 py-4 md:py-8">
-        <div className="flex flex-col md:flex-row gap-4 md:gap-8 relative min-h-[calc(100vh-200px)]">
+      <div className="w-full px-4 md:px-8 py-4 md:py-8">
+        <div className="relative w-full">
+          <div className="flex flex-row relative w-full">
+            <div 
+              ref={containerRef}
+              className="flex flex-col md:flex-row gap-4 md:gap-0 relative w-full flex-1"
+              style={{ 
+                height: isMobile ? 'auto' : 'calc(100vh - 128px)'
+              }}
+            >
           {/* Configuration Pane */}
           <div 
             ref={leftPanelRef}
-            className={`w-full md:flex-shrink-0 md:h-screen md:overflow-y-auto md:sticky md:top-20 custom-scrollbar`}
-            style={{ width: typeof window !== 'undefined' && window.innerWidth >= 768 ? `${configWidth}px` : '100%' }}
+            className={`w-full md:flex-shrink-0 md:h-full md:overflow-y-auto custom-scrollbar rounded-2xl border ${isDarkMode ? 'bg-[#0A0A0A] border-white/10' : 'bg-white border-black/5'} shadow-xl`}
+            style={{ 
+              width: isMobile ? '100%' : `${configWidth}%`,
+              minWidth: isMobile ? '100%' : '320px',
+              maxWidth: isMobile ? '100%' : '800px'
+            }}
           >
-            <div className="sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-2 md:p-4 border-b border-black/5 dark:border-white/10">
-                    <div className="flex gap-1 p-1 bg-black/10 dark:bg-white/5 rounded-lg">
+            <div className={`sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-2 md:p-4 border-b border-black/5 dark:border-white/10 ${!isDarkMode ? '!bg-white' : ''}`}>
+                    <div className="flex gap-1 p-1 bg-gray-200 dark:bg-white/5 rounded-lg">
                       {(['config', 'profile', 'style', 'tools', 'guide'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab)}
                           className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-md transition-all ${
                             activeTab === tab
-                              ? (isDarkMode ? 'bg-white/10 text-white' : 'bg-white text-black shadow-sm')
+                              ? (isDarkMode ? 'bg-white/10 text-white' : 'bg-gray-300 text-black shadow-sm')
                               : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/60 hover:text-black')
                           }`}
                         >
@@ -1426,6 +1647,8 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                                      <>
                                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Recommended)</option>
                                        <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
+                                       <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                                       <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</option>
                                      </>
                                    )}
                                    {selectedEngine === 'openai' && (
@@ -1462,73 +1685,18 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
 
                            <div className="space-y-4">
                              <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-2 opacity-50">
-                               {selectedEngine === 'production' ? 'Authentication Keys' : 'Authentication Key'}
+                               Authentication Keys
                              </label>
-                             
-                             {selectedEngine === 'production' ? (
-                               <div className="grid grid-cols-1 gap-6">
-                                 <div className="space-y-2">
-                                   <div className="flex items-center justify-between px-1">
-                                     <p className="text-[10px] font-black uppercase tracking-[0.1em] opacity-40">Gemini API</p>
-                                     <span className="text-[9px] opacity-30 font-mono">Required</span>
-                                   </div>
-                                   <input 
-                                     type="password"
-                                     placeholder="Enter Gemini API Key"
-                                     className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
-                                       isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
-                                     }`}
-                                     value={engineConfig.gemini.apiKey}
-                                     onChange={(e) => setEngineConfig({
-                                       ...engineConfig,
-                                       gemini: { ...engineConfig.gemini, apiKey: e.target.value }
-                                     })}
-                                   />
-                                 </div>
-                                 <div className="space-y-2">
-                                   <div className="flex items-center justify-between px-1">
-                                     <p className="text-[10px] font-black uppercase tracking-[0.1em] opacity-40">OpenAI API</p>
-                                     <span className="text-[9px] opacity-30 font-mono">Required</span>
-                                   </div>
-                                   <input 
-                                     type="password"
-                                     placeholder="Enter OpenAI API Key"
-                                     className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
-                                       isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
-                                     }`}
-                                     value={engineConfig.openai.apiKey}
-                                     onChange={(e) => setEngineConfig({
-                                       ...engineConfig,
-                                       openai: { ...engineConfig.openai, apiKey: e.target.value }
-                                     })}
-                                   />
-                                 </div>
-                               </div>
-                             ) : (
-                               <div className="space-y-2">
-                                 <div className="flex items-center justify-between px-1">
-                                   <p className="text-[10px] font-black uppercase tracking-[0.1em] opacity-40 capitalize">{selectedEngine} API</p>
-                                   <span className="text-[9px] opacity-30 font-mono">Optional if env set</span>
-                                 </div>
-                                 <input 
-                                   type="password"
-                                   placeholder={`Enter ${selectedEngine} API key`}
-                                   className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
-                                     isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
-                                   }`}
-                                   value={engineConfig[selectedEngine].apiKey}
-                                   onChange={(e) => setEngineConfig({
-                                     ...engineConfig,
-                                     [selectedEngine]: { ...engineConfig[selectedEngine], apiKey: e.target.value }
-                                   })}
-                                 />
-                               </div>
-                             )}
+                             <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
+                               <p className="text-xs opacity-70">
+                                 API keys are now managed securely in your <button onClick={() => setActiveTab('profile')} className="text-emerald-500 font-bold hover:underline">Profile</button>.
+                               </p>
+                             </div>
                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      {/* LinkedIn Profile */}
+                         </div>
+                       </div>
+                     </div>
+                     {/* LinkedIn Profile */}
                       <div>
                         <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>LinkedIn Profile (Optional)</label>
                         <div className="space-y-3">
@@ -1632,7 +1800,14 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
                             <div className="flex gap-3">
                               <button
-                                onClick={handleOptimize}
+                                onClick={() => {
+                                  if (isOptimizing || isExtracting) {
+                                    console.log("Button disabled");
+                                    return;
+                                  }
+                                  console.log("Button clicked");
+                                  handleOptimize();
+                                }}
                                 disabled={isOptimizing || isExtracting}
                                 className={`flex-1 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
                                   isOptimizing 
@@ -1714,6 +1889,101 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
               {activeTab === 'profile' && (
                 <div className="space-y-6">
                   <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-2">
+                        <Users className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                        <h2 className="font-semibold text-lg">Account Settings</h2>
+                      </div>
+                      <button 
+                        onClick={user ? handleLogout : handleLogin}
+                        className={`px-4 py-1.5 text-xs font-bold uppercase tracking-widest rounded-full transition-colors ${
+                          isDarkMode 
+                            ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30' 
+                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border border-emerald-200'
+                        }`}
+                      >
+                        {user ? 'Logout' : 'Login'}
+                      </button>
+                    </div>
+                    
+                    {user ? (
+                      <div className="space-y-4">
+                        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                          <p className="text-sm font-medium">Logged in as: {user.email}</p>
+                        </div>
+                        
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Gemini API Key</label>
+                          <input 
+                            type="password"
+                            placeholder="Enter your Gemini API Key"
+                            value={apiKey}
+                            onChange={(e) => {
+                              setApiKey(e.target.value);
+                              setIsApiKeySaved(false);
+                            }}
+                            className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                            }`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">OpenAI API Key</label>
+                          <input 
+                            type="password"
+                            placeholder="Enter your OpenAI API Key"
+                            value={openaiApiKey}
+                            onChange={(e) => {
+                              setOpenaiApiKey(e.target.value);
+                              setIsApiKeySaved(false);
+                            }}
+                            className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                            }`}
+                          />
+                          <p className="text-xs opacity-50 mt-2">Your API keys are encrypted before being stored and are never exposed to the frontend.</p>
+                        </div>
+
+                        <button
+                          onClick={handleSaveProfile}
+                          disabled={isSavingProfile}
+                          className={`w-full py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
+                            isSavingProfile
+                              ? 'bg-gray-400 text-white cursor-not-allowed'
+                              : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20'
+                          }`}
+                        >
+                          {isSavingProfile ? 'Saving...' : 'Save Profile & Master Resume'}
+                        </button>
+
+                        <button
+                          onClick={async () => {
+                            if (confirm("Are you sure you want to clear your saved API keys?")) {
+                              setApiKey('');
+                              setOpenaiApiKey('');
+                              setEncryptedApiKey('');
+                              setIsApiKeySaved(false);
+                              // Also update Firestore
+                              await setDoc(doc(db, 'users', user.uid), {
+                                encryptedApiKey: ''
+                              }, { merge: true });
+                              alert("API keys cleared.");
+                            }
+                          }}
+                          className="w-full py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20"
+                        >
+                          Clear Saved API Keys
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 opacity-60">
+                        <p>Please login to save your API key and master resume.</p>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
                     <div className="flex items-center gap-2 mb-6">
                       <Users className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
                       <h2 className="font-semibold text-lg">Profile Overrides</h2>
@@ -1723,7 +1993,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Full Name</label>
                         <input 
                           type="text"
-                          placeholder={masterResume.personal_info.name}
+                          placeholder="Full Name"
                           value={profileName}
                           onChange={(e) => setProfileName(e.target.value)}
                           className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
@@ -1735,7 +2005,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Location</label>
                         <input 
                           type="text"
-                          placeholder={masterResume.personal_info.location}
+                          placeholder="Location (City, State)"
                           value={profileLocation}
                           onChange={(e) => setProfileLocation(e.target.value)}
                           className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
@@ -1747,7 +2017,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Email Address</label>
                         <input 
                           type="email"
-                          placeholder={masterResume.personal_info.email}
+                          placeholder="Email Address"
                           value={profileEmail}
                           onChange={(e) => setProfileEmail(e.target.value)}
                           className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
@@ -1759,7 +2029,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Phone Number</label>
                         <input 
                           type="text"
-                          placeholder={masterResume.personal_info.phone}
+                          placeholder="Phone Number"
                           value={profilePhone}
                           onChange={(e) => setProfilePhone(e.target.value)}
                           className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
@@ -1771,7 +2041,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                         <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">LinkedIn URL</label>
                         <input 
                           type="url"
-                          placeholder={masterResume.personal_info.linkedin}
+                          placeholder="LinkedIn Profile URL"
                           value={profileLinkedIn}
                           onChange={(e) => setProfileLinkedIn(e.target.value)}
                           className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
@@ -1837,7 +2107,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                       </div>
                       <div className="space-y-2">
                         <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">4. Advanced Tools</h3>
-                        <p className="text-[11px] leading-relaxed opacity-70">
+                        <div className="text-[11px] leading-relaxed opacity-70">
                           Check the <strong>Tools</strong> tab for:
                           <ul className="list-disc list-inside mt-1 space-y-1">
                             <li><strong>Gap Analysis:</strong> See which skills are missing.</li>
@@ -1845,7 +2115,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                             <li><strong>Cover Letter:</strong> Create a tailored cover letter instantly.</li>
                             <li><strong>Versions:</strong> Save and restore different versions of your resume.</li>
                           </ul>
-                        </p>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">5. Styling & Export</h3>
@@ -2178,61 +2448,171 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
             </div>
           </div>
 
-        {/* Resize Handle */}
+        {/* Vertical Resize Handle (Left/Right) */}
           <div 
-            onMouseDown={handleMouseDown}
-            className={`hidden md:flex w-6 cursor-col-resize justify-center items-center group -mx-3 z-10`}
+            onMouseDown={handleMouseDownDivider}
+            className="hidden md:flex w-8 cursor-col-resize justify-center items-center group z-10 shrink-0"
           >
-            <div className={`w-1 h-16 rounded-full transition-colors ${isResizing ? 'bg-emerald-500' : 'bg-black/20 dark:bg-white/20 group-hover:bg-emerald-500/50'}`} />
+            <div className={`w-1 h-16 rounded-full transition-colors ${isResizingWidth ? 'bg-emerald-500' : 'bg-black/20 dark:bg-white/20 group-hover:bg-emerald-500/50'}`} />
           </div>
 
           {/* Result Section */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 flex flex-col h-full">
             <AnimatePresence mode="wait">
               {isOptimizing && Object.keys(results).length === 0 ? (
                 <motion.div 
+                  key="optimizing"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className={`h-full min-h-[600px] flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
-                    isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/10'
+                  className={`h-full min-h-[500px] flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
+                    isDarkMode ? 'bg-[#0a0a0a] border-white/5' : 'bg-white border-black/10'
                   }`}
                 >
-                  <div className="relative w-20 h-20 mb-6">
-                    <div className="absolute inset-0 border-4 border-emerald-500/20 rounded-full" />
-                    <div className="absolute inset-0 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                    <Cpu className="absolute inset-0 m-auto w-8 h-8 text-emerald-500 animate-pulse" />
+                  <div className="w-full max-w-md space-y-12">
+                    <div className="relative w-32 h-32 mx-auto">
+                      {/* Outer Ring */}
+                      <div className="absolute inset-0 border-4 border-emerald-500/10 rounded-full" />
+                      {/* Progress Ring */}
+                      <svg className="absolute inset-0 w-full h-full -rotate-90">
+                        <circle
+                          cx="64"
+                          cy="64"
+                          r="60"
+                          fill="transparent"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                          className="text-emerald-500"
+                          strokeDasharray={377}
+                          strokeDashoffset={377 - (377 * optimizationProgress) / 100}
+                          style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Cpu className="w-12 h-12 text-emerald-500 animate-pulse" />
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-6">
+                      <h3 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-black'}`}>Optimizing Resume</h3>
+                      
+                      <div className="flex justify-between items-end">
+                        <p className="text-xs font-mono text-emerald-500 uppercase tracking-[0.2em] text-left max-w-[70%] leading-relaxed">
+                          {optimizationStatus}
+                        </p>
+                        <span className="text-4xl font-black font-mono text-emerald-500">
+                          {optimizationProgress}%
+                        </span>
+                      </div>
+                      
+                      <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                        <motion.div 
+                          className="h-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${optimizationProgress}%` }}
+                          transition={{ type: "spring", bounce: 0, duration: 0.5 }}
+                        />
+                      </div>
+                      
+                      <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-30">
+                        <span>Analyzing Job Context</span>
+                        <span>Generating Content</span>
+                        <span>Finalizing</span>
+                      </div>
+                    </div>
+
+                    <p className="opacity-40 text-sm leading-relaxed italic font-serif">
+                      "Tailoring your experience for maximum impact..."
+                    </p>
                   </div>
-                  <h3 className="text-xl font-bold mb-2">Optimizing Your Resume</h3>
-                  <p className="opacity-50 max-w-sm text-sm">
-                    Our AI is analyzing the job description and tailoring your experience for your target audiences...
-                  </p>
                 </motion.div>
-              ) : (Object.keys(results).length === 0 && !resumeText) ? (
+              ) : (Object.keys(results).length === 0) ? (
                 <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className={`h-full min-h-[600px] flex flex-col items-center justify-center text-center p-12 rounded-2xl border border-dashed ${
-                    isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/10'
+                  key="empty-state"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 1.05 }}
+                  className={`h-full min-h-[500px] flex flex-col items-center justify-center text-center p-8 md:p-16 rounded-3xl border border-dashed relative overflow-hidden ${
+                    isDarkMode ? 'bg-[#0a0a0a] border-white/5' : 'bg-white border-black/10'
                   }`}
                 >
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 ${isDarkMode ? 'bg-emerald-500/10' : 'bg-emerald-50'}`}>
-                    <Search className={`w-8 h-8 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                  {/* Background Accents */}
+                  <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none opacity-20">
+                    <div className="absolute -top-24 -left-24 w-96 h-96 bg-emerald-500/20 rounded-full blur-[100px]" />
+                    <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px]" />
                   </div>
-                  <h3 className="text-xl font-bold mb-2">Ready for Analysis</h3>
-                  <p className="opacity-50 max-w-sm text-sm">
-                    Upload your resume and select your target audiences to begin the AI-powered optimization process.
-                  </p>
+
+                  <div className="w-full max-w-3xl space-y-12 relative z-10">
+                    <div className="space-y-6">
+                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold uppercase tracking-widest border border-emerald-500/20">
+                        <Zap className="w-3 h-3" />
+                        AI-Powered Optimization
+                      </div>
+                      <h3 className={`text-4xl md:text-6xl font-black tracking-tight leading-[1.1] ${isDarkMode ? 'text-white' : 'text-black'}`}>
+                        Transform Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">Professional Identity</span>
+                      </h3>
+                      <p className="opacity-60 text-lg md:text-xl max-w-2xl mx-auto leading-relaxed font-medium">
+                        Upload your resume and target a specific role. Our AI will craft a high-impact version tailored for ATS success.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                      <div className="space-y-4 group">
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
+                          <Upload className="w-8 h-8 text-emerald-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className="font-bold text-sm uppercase tracking-widest">1. Input</h4>
+                          <p className="text-xs opacity-40">Load your current experience</p>
+                        </div>
+                      </div>
+                      <div className="space-y-4 group">
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:-rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
+                          <Target className="w-8 h-8 text-blue-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className="font-bold text-sm uppercase tracking-widest">2. Target</h4>
+                          <p className="text-xs opacity-40">Define your dream role</p>
+                        </div>
+                      </div>
+                      <div className="space-y-4 group">
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
+                          <Zap className="w-8 h-8 text-yellow-500" />
+                        </div>
+                        <div className="space-y-1">
+                          <h4 className="font-bold text-sm uppercase tracking-widest">3. Optimize</h4>
+                          <p className="text-xs opacity-40">Get your ATS-ready resume</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-8">
+                      <div className="flex items-center justify-center gap-8 opacity-30 grayscale hover:grayscale-0 transition-all duration-500">
+                        <div className="flex items-center gap-2">
+                          <Cpu className="w-5 h-5" />
+                          <span className="text-xs font-bold uppercase tracking-widest">Hybrid Engine</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Layout className="w-5 h-5" />
+                          <span className="text-xs font-bold uppercase tracking-widest">Smart Layout</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <BarChart3 className="w-5 h-5" />
+                          <span className="text-xs font-bold uppercase tracking-widest">ATS Scoring</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </motion.div>
-              ) : ((activeAudience && results[activeAudience]) || resumeText) && (
+              ) : (
                 <motion.div 
+                  key="preview"
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="space-y-6"
+                  className="space-y-6 h-full flex flex-col"
                 >
                   {/* Resume Preview Pane */}
-                  <div className={`rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
+                  <div className={`flex-1 flex flex-col rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
                     <div className={`p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-4 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
                       <div className="flex items-center justify-between w-full sm:w-auto gap-4">
                         <div className="flex items-center gap-2">
@@ -2313,7 +2693,7 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
                     
                     <div 
                       ref={previewContainerRef}
-                      className={`p-4 md:p-8 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar overflow-x-auto w-full`}
+                      className={`flex-1 p-4 md:p-8 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar overflow-auto w-full`}
                     >
                       <div 
                         className="flex flex-col gap-8 w-max mx-auto"
@@ -2357,8 +2737,10 @@ ${(res.education || [masterResume.education]).map(edu => typeof edu === 'string'
           </div>
         </div>
       </div>
+    </div>
+  </div>
 
-      <footer className={`max-w-7xl mx-auto px-4 py-12 border-t mt-12 transition-colors ${isDarkMode ? 'border-white/10' : 'border-black/5'}`}>
+    <footer className={`w-full px-4 md:px-8 py-12 border-t mt-12 transition-colors ${isDarkMode ? 'border-white/10' : 'border-black/5'}`}>
         <div className="flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 opacity-20" />
