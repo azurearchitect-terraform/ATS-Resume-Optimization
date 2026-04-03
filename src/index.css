@@ -28,6 +28,10 @@
     background: rgba(16, 185, 129, 0.4);
   }
 
+  .page-break-after-always {
+    page-break-after: always;
+  }
+
   /* Force standard colors for PDF generation to avoid html2canvas oklab/oklch and color-mix errors */
   .legacy-colors {
     color: #1a1a1a; /* Explicitly set to prevent inheriting oklch from body */
@@ -215,9 +219,11 @@
   .resume-page {
     width: 210mm;
     min-width: 210mm;
-    min-height: 297mm; /* Minimum height for A4, allows growing */
+    height: 297mm; /* Fixed height for A4 */
+    max-height: 297mm;
+    overflow: hidden; /* Prevent content from spilling out in UI */
     background-color: white;
-    padding: 15mm;
+    padding: 12mm;
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
@@ -225,12 +231,12 @@
     color: #1A1A1A;
   }
 
-  /* When printing, ensure it breaks pages correctly */
   @media print {
     .resume-page {
-      min-height: auto;
-      height: auto;
-      display: block; /* Flex can sometimes mess up print pagination */
+      overflow: visible !important;
+      height: auto !important;
+      min-height: 297mm !important;
+      display: block !important; /* Flex can sometimes mess up print pagination */
     }
     .resume-section {
       /* Allow sections to break across pages */

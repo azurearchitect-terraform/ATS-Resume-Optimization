@@ -37,7 +37,9 @@ export const useResumeStore = create<ResumeStore>((set, get) => ({
       email: '',
       phone: '',
       location: '',
-      summary: ''
+      summary: '',
+      linkedin: '',
+      linkedinText: ''
     },
     experience: [],
     skills: [],

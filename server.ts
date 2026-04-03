@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import puppeteer from "puppeteer";
 import bodyParser from "body-parser";
@@ -7,8 +6,22 @@ import cors from "cors";
 import crypto from "crypto";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { v4 as uuidv4 } from 'uuid';
 
 dotenv.config();
+
+// PDF Sessions storage
+const pdfSessions = new Map<string, { html: string, css: string, fonts: string, timestamp: number }>();
+
+// Cleanup old sessions every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of pdfSessions.entries()) {
+    if (now - session.timestamp > 1800000) { // 30 minutes
+      pdfSessions.delete(id);
+    }
+  }
+}, 600000);
 
 // Encryption Setup
 // We use a stable key derived from GEMINI_API_KEY if ENCRYPTION_KEY is not provided.
@@ -57,7 +70,6 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(cors());
-  // Increase payload limit for large HTML strings
   app.use(bodyParser.json({ limit: '50mb' }));
   app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
@@ -103,6 +115,28 @@ async function startServer() {
     } catch (error: any) {
       console.error("Encryption Error:", error);
       res.status(500).json({ error: "Failed to encrypt API key" });
+    }
+  });
+
+  // API Endpoint to decrypt API keys for frontend use
+  app.post("/api/decrypt-keys", (req, res) => {
+    const { encryptedKey } = req.body;
+    if (!encryptedKey) {
+      return res.status(400).json({ error: "Encrypted key is required" });
+    }
+    try {
+      const decryptedString = decrypt(encryptedKey);
+      let keys: any = {};
+      try {
+        keys = JSON.parse(decryptedString);
+      } catch (e) {
+        // For backwards compatibility if it was a single raw key
+        keys = { gemini: decryptedString };
+      }
+      res.json({ keys });
+    } catch (error: any) {
+      console.error("Decryption Error:", error);
+      res.status(500).json({ error: "Failed to decrypt API keys" });
     }
   });
 
@@ -161,24 +195,7 @@ async function startServer() {
           }
         });
       } else {
-        // Default to Gemini
-        const ai = new GoogleGenAI({ apiKey });
-        const response = await ai.models.generateContent({
-          model: model || "gemini-3.1-pro-preview",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-          }
-        });
-
-        res.json({ 
-          result: response.text,
-          usage: {
-            promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
-            candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
-            totalTokenCount: response.usageMetadata?.totalTokenCount || 0
-          }
-        });
+        res.status(400).json({ error: "Gemini requests must be handled client-side as per security guidelines." });
       }
     } catch (error: any) {
       console.error("Optimization Error:", error);
@@ -187,70 +204,96 @@ async function startServer() {
     }
   });
 
-  // API Endpoint for PDF Generation
+  // API Endpoint for PDF Generation (Direct)
   app.post("/api/generate-pdf", async (req, res) => {
     const { html, css, fonts } = req.body;
+    await handlePdfGeneration(html, css, fonts, res);
+  });
 
+  // API Endpoint to create a PDF session
+  app.post("/api/pdf-session", (req, res) => {
+    const { html, css, fonts } = req.body;
+    if (!html) {
+      return res.status(400).json({ error: "HTML content is required" });
+    }
+    const sessionId = uuidv4();
+    pdfSessions.set(sessionId, { html, css, fonts, timestamp: Date.now() });
+    res.json({ sessionId });
+  });
+
+  // API Endpoint to download PDF from session
+  app.get("/api/download-pdf/:sessionId", async (req, res) => {
+    const { sessionId } = req.params;
+    const session = pdfSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).send("PDF session expired or not found. Please try generating again.");
+    }
+    // Optional: delete session after retrieval to save memory
+    // pdfSessions.delete(sessionId);
+    await handlePdfGeneration(session.html, session.css, session.fonts, res);
+  });
+
+  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any) {
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
 
+    console.log(`Generating PDF. HTML length: ${html.length}`);
+
     let browser;
     try {
-      // Unconditionally delete PUPPETEER_EXECUTABLE_PATH to force puppeteer to use the locally installed browser
-      // which we installed via postinstall script into .cache/puppeteer
-      delete process.env.PUPPETEER_EXECUTABLE_PATH;
-
-      // Launch Puppeteer with necessary flags for container environments
+      // In this environment, we often need to force puppeteer to use the installed chrome
+      // or let it find its own. Deleting the env var sometimes helps if it points to a wrong path.
+      const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+      
       browser = await puppeteer.launch({
+        executablePath: executablePath || undefined,
         headless: true,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
-          "--font-render-hinting=none",
           "--disable-gpu",
+          "--font-render-hinting=none",
         ],
       });
 
       const page = await browser.newPage();
+      
+      // Set viewport to A4 dimensions at 96 DPI
+      await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
 
-      // Set a reasonable viewport
-      await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 2 });
-
-      // Construct the base HTML
+      // Construct a more robust base HTML
       const baseHtml = `
         <!DOCTYPE html>
         <html>
           <head>
             <meta charset="UTF-8">
             <style>
-              @page {
-                size: A4;
+              /* Reset and Base Styles */
+              * { box-sizing: border-box; }
+              @page { 
+                size: A4; 
+                margin: 0; /* No margins to allow fixed-height pages to fit */
               }
               html, body {
                 margin: 0;
                 padding: 0;
-                height: auto !important;
-                min-height: 100% !important;
-                -webkit-print-color-adjust: exact;
+                width: 210mm;
                 background: white;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
               }
-              /* Ensure the resume-page fits perfectly and allows multiple pages */
-              .resume-page {
-                box-shadow: none !important;
-                margin: 0 !important;
-                border: none !important;
+              /* Ensure the resume container takes full width */
+              #resume-container, .resume-page {
                 width: 100% !important;
-                min-height: 100% !important;
-                height: auto !important;
-                overflow: visible !important;
-                display: block !important;
-                padding: 0 !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
               }
-              .resume-section {
-                /* Removed page-break-inside to allow sections to break across pages */
-              }
+              /* Inject User Styles */
+              ${css || ''}
+              ${fonts || ''}
             </style>
           </head>
           <body>
@@ -259,64 +302,60 @@ async function startServer() {
         </html>
       `;
 
-      // Set content
-      await page.setContent(baseHtml, { waitUntil: "load", timeout: 30000 });
+      // Set content and wait for it to load
+      await page.setContent(baseHtml, { 
+        waitUntil: "networkidle2", // Wait until no more than 2 network connections
+        timeout: 30000 
+      });
 
-      // Inject styles safely
-      if (css) {
-        await page.addStyleTag({ content: css });
-      }
-      if (fonts) {
-        await page.addStyleTag({ content: fonts });
-      }
-      
-      // Wait for network to settle a bit for any external assets
-      try {
-        await page.waitForNetworkIdle({ idleTime: 500, timeout: 5000 });
-      } catch (e) {
-        console.warn("Network idle timeout, proceeding with PDF generation");
-      }
-      
-      // Wait for fonts to be ready
+      // Wait for fonts to load
       await page.evaluateHandle('document.fonts.ready');
 
       // Generate PDF
       const pdfBuffer = await page.pdf({
         format: "A4",
         printBackground: true,
-        margin: {
-          top: "10mm",
-          right: "10mm",
-          bottom: "10mm",
-          left: "10mm",
-        }
+        displayHeaderFooter: false,
+        preferCSSPageSize: true,
+        pageRanges: "1-2"
       });
 
-      if (!pdfBuffer || pdfBuffer.length === 0) {
-        throw new Error("Generated PDF buffer is empty");
+      console.log(`PDF generated. Size: ${pdfBuffer.length} bytes`);
+
+      if (pdfBuffer.length < 100) {
+        throw new Error("Generated PDF is suspiciously small. It might be empty or corrupted.");
       }
 
-      console.log(`PDF generated successfully. Size: ${pdfBuffer.length} bytes`);
-
-      res.writeHead(200, {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": 'attachment; filename="resume.pdf"',
-        "Content-Length": pdfBuffer.length,
-      });
-
+      // Set headers and send
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", 'attachment; filename="resume.pdf"');
+      res.setHeader("Content-Length", pdfBuffer.length);
       res.end(pdfBuffer);
+
     } catch (error: any) {
-      console.error("PDF Generation Error:", error);
-      res.status(500).json({ error: "Failed to generate PDF", details: error.message });
+      console.error("CRITICAL PDF ERROR:", error);
+      // If we haven't sent headers yet, send a JSON error
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: "Failed to generate PDF", 
+          details: error.message,
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
     } finally {
       if (browser) {
-        await browser.close();
+        try {
+          await browser.close();
+        } catch (e) {
+          console.error("Error closing puppeteer:", e);
+        }
       }
     }
-  });
+  }
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

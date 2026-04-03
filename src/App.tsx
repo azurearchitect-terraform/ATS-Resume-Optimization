@@ -39,6 +39,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSo
 import { SortableSection } from './components/SortableSection';
 import { AdditionalTools } from './components/AdditionalTools';
 import { useResumeStore } from './store';
+import { ResumeData } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
 import { optimizeResume, fetchJobDescription, analyzeBestAudiences, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
@@ -54,6 +55,43 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 type OptimizationMode = 'conservative' | 'balanced' | 'aggressive';
+
+const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const bgColors = {
+    success: 'bg-emerald-500',
+    error: 'bg-red-500',
+    info: 'bg-blue-500'
+  };
+
+  return (
+    <div className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-white ${bgColors[type]}`}>
+      {type === 'success' && <CheckCircle2 className="w-5 h-5" />}
+      {type === 'error' && <AlertCircle className="w-5 h-5" />}
+      {type === 'info' && <Info className="w-5 h-5" />}
+      <span className="text-sm font-medium">{message}</span>
+    </div>
+  );
+};
+
+const ConfirmDialog = ({ message, onConfirm, onCancel, isDarkMode }: { message: string, onConfirm: () => void, onCancel: () => void, isDarkMode: boolean }) => {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className={`p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4 ${isDarkMode ? 'bg-[#141414] border border-white/10 text-white' : 'bg-white border border-black/5 text-black'}`}>
+        <h3 className="text-lg font-bold mb-4">Confirm Action</h3>
+        <p className="text-sm opacity-80 mb-6">{message}</p>
+        <div className="flex justify-end gap-3">
+          <button onClick={onCancel} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}>Cancel</button>
+          <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">Confirm</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const MODE_DESCRIPTIONS = {
   conservative: "Minimal edits. Preserves your original structure and wording while ensuring basic keyword alignment.",
@@ -98,6 +136,22 @@ export default function App() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
   const [encryptedApiKey, setEncryptedApiKey] = useState('');
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void } | null>(null);
+
+  useEffect(() => {
+    if (encryptedApiKey) {
+      setEngineConfig(prev => ({
+        ...prev,
+        gemini: { ...prev.gemini, apiKey: encryptedApiKey },
+        openai: { ...prev.openai, apiKey: encryptedApiKey },
+      }));
+    }
+  }, [encryptedApiKey]);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type });
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -138,7 +192,7 @@ export default function App() {
       await signInWithPopup(auth, provider);
     } catch (err) {
       console.error("Login Error:", err);
-      alert("Failed to login.");
+      showToast("Failed to login.", "error");
     }
   };
 
@@ -152,11 +206,11 @@ export default function App() {
 
   const handleSaveProfile = async () => {
     if (!user) {
-      alert("Please login first.");
+      showToast("Please login first.", "error");
       return;
     }
     if (!resumeText) {
-      alert("Please provide your master resume.");
+      showToast("Please provide your master resume.", "error");
       return;
     }
 
@@ -195,10 +249,10 @@ export default function App() {
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      alert("Profile saved successfully!");
+      showToast("Profile saved successfully!", "success");
     } catch (err) {
       console.error("Error saving profile:", err);
-      alert("Failed to save profile.");
+      showToast("Failed to save profile.", "error");
     } finally {
       setIsSavingProfile(false);
     }
@@ -206,22 +260,28 @@ export default function App() {
 
   const handleResetKeys = async () => {
     if (!user) return;
-    if (!window.confirm("Are you sure you want to clear your saved API keys? You will need to re-enter them.")) return;
     
-    try {
-      await setDoc(doc(db, 'users', user.uid), {
-        encryptedApiKey: "",
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      setApiKey('');
-      setOpenaiApiKey('');
-      setEncryptedApiKey('');
-      setIsApiKeySaved(false);
-      alert("API keys cleared successfully.");
-    } catch (err) {
-      console.error("Error resetting keys:", err);
-      alert("Failed to reset keys.");
-    }
+    setConfirmDialog({
+      message: "Are you sure you want to clear your saved API keys? You will need to re-enter them.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        try {
+          await setDoc(doc(db, 'users', user.uid), {
+            encryptedApiKey: "",
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+          setApiKey('');
+          setOpenaiApiKey('');
+          setEncryptedApiKey('');
+          setIsApiKeySaved(false);
+          showToast("API keys cleared successfully.", "success");
+        } catch (err) {
+          console.error("Error resetting keys:", err);
+          showToast("Failed to reset keys.", "error");
+        }
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
   };
 
   const [resumeText, setResumeText] = useState(() => {
@@ -284,7 +344,7 @@ export default function App() {
 
   // Profile Overrides
   const [profileName, setProfileName] = useState(() => localStorage.getItem('profileName') || '');
-  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || '');
+  const [profileLocation, setProfileLocation] = useState(() => localStorage.getItem('profileLocation') || 'Hyderabad, Telangana, India');
   const [profileEmail, setProfileEmail] = useState(() => localStorage.getItem('profileEmail') || '');
   const [profilePhone, setProfilePhone] = useState(() => localStorage.getItem('profilePhone') || '');
   const [profileLinkedIn, setProfileLinkedIn] = useState(() => localStorage.getItem('profileLinkedIn') || '');
@@ -356,8 +416,10 @@ export default function App() {
         },
         experience: res.experience.map((e, i) => ({ ...e, id: `exp_${i}` })),
         skills: res.skills as any, // Cast to any to handle both structures
-        education: res.education as any,
-        projects: res.projects?.map(p => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any,
+        education: (res.education && res.education.length > 0) ? res.education as any : data.education,
+        projects: (res.projects && res.projects.length > 0) 
+          ? res.projects?.map(p => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any
+          : data.projects,
         certifications: res.certifications || []
       });
     }
@@ -568,15 +630,26 @@ export default function App() {
     if (file) {
       if (file.type === 'application/pdf') {
         extractTextFromPDF(file);
-      } else if (file.type === 'text/plain') {
+      } else if (file.type === 'text/plain' || file.type === 'application/json') {
         const reader = new FileReader();
         reader.onload = (event) => {
-          setResumeText(event.target?.result as string);
+          const content = event.target?.result as string;
+          if (file.type === 'application/json') {
+            try {
+              const json = JSON.parse(content);
+              setResumeText(JSON.stringify(json, null, 2));
+            } catch (e) {
+              setError('Invalid JSON file.');
+              return;
+            }
+          } else {
+            setResumeText(content);
+          }
           setFileName(file.name);
         };
         reader.readAsText(file);
       } else {
-        setError('Please upload a PDF or TXT file.');
+        setError('Please upload a PDF, TXT, or JSON file.');
       }
     }
   };
@@ -739,66 +812,55 @@ export default function App() {
       const engineName = selectedEngine === 'production' ? 'Hybrid Mode (Gemini + OpenAI)' : selectedEngine.toUpperCase();
 
       // Run all audience optimizations in parallel
-      await Promise.all(currentAudiences.map(async (audienceId) => {
-        if (controller.signal.aborted) return;
+      const optimizationPromises = currentAudiences.map(async (audienceId) => {
+        const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
         
-        try {
-          const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
-          setOptimizationStatus(`Optimizing for ${audienceLabel} using ${engineName}...`);
-          
-          const data = await optimizeResume(
-            finalResumeText, 
-            jobDescription, 
-            finalTargetRole, 
-            mode, 
-            audienceLabel, 
-            routerConfig, 
-            linkedInUrl, 
-            linkedInPdfText, 
-            jobUrl, 
-            fastMode, 
-            recruiterSimulationMode
-          );
-          
-          completedAudiences++;
-          
-          // Update token usage
-          if (data._usage) {
-            setTokenUsage(prev => ({
-              input: (prev.input || 0) + (data._usage!.promptTokenCount || 0),
-              output: (prev.output || 0) + (data._usage!.candidatesTokenCount || 0),
-              total: (prev.total || 0) + (data._usage!.totalTokenCount || 0)
-            }));
-          }
-
-          // Update results incrementally using functional update to avoid race conditions
-          setResults(prev => {
-            const newResults = { 
-              ...prev, 
-              [audienceId]: { 
-                ...data, 
-                _engine: selectedEngine, 
-                _model: engineConfig[selectedEngine].model 
-              } as any
-            };
-            
-            // Set active audience to the first one that completes if none is set
-            if (!activeAudience) {
-              setActiveAudience(audienceId);
-            }
-            
-            return newResults;
-          });
-        } catch (innerErr: any) {
-          console.error(`Error optimizing for ${audienceId}:`, innerErr);
-          const isRateLimit = innerErr?.message?.includes("429") || innerErr?.message?.includes("RESOURCE_EXHAUSTED") || innerErr?.message?.includes("quota");
-          if (isRateLimit) {
-            setError(`Rate limit or quota exceeded for ${audienceId}. Please try again in a few minutes or switch to a different AI engine in the settings.`);
-          } else {
-            setError(`Failed to optimize for ${audienceId}. ${innerErr.message || ''}`);
-          }
+        const data = await optimizeResume(
+          finalResumeText, 
+          jobDescription, 
+          finalTargetRole, 
+          mode, 
+          audienceLabel, 
+          routerConfig, 
+          linkedInUrl, 
+          linkedInPdfText, 
+          jobUrl, 
+          fastMode, 
+          recruiterSimulationMode
+        );
+        
+        completedAudiences++;
+        setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
+        
+        // Update token usage
+        if (data._usage) {
+          setTokenUsage(prev => ({
+            input: (prev.input || 0) + (data._usage!.promptTokenCount || 0),
+            output: (prev.output || 0) + (data._usage!.candidatesTokenCount || 0),
+            total: (prev.total || 0) + (data._usage!.totalTokenCount || 0)
+          }));
         }
-      }));
+
+        // Update results
+        setResults(prev => {
+          const newResults = { 
+            ...prev, 
+            [audienceId]: { 
+              ...data, 
+              _engine: selectedEngine, 
+              _model: engineConfig[selectedEngine].model 
+            } as any
+          };
+          
+          if (!activeAudience) {
+            setActiveAudience(audienceId);
+          }
+          
+          return newResults;
+        });
+      });
+
+      await Promise.all(optimizationPromises);
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Optimization aborted');
@@ -875,7 +937,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     `.trim();
     
     navigator.clipboard.writeText(text);
-    alert('Resume text copied to clipboard! You can paste this into Word or any other editor.');
+    showToast('Resume text copied to clipboard! You can paste this into Word or any other editor.', 'success');
   };
 
   const leftPanelRef = useRef<HTMLDivElement>(null);
@@ -963,7 +1025,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         .map(s => s.innerHTML)
         .join('\n');
 
-      const response = await fetch('/api/generate-pdf', {
+      const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -975,34 +1037,46 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to generate PDF on server');
+      if (!sessionResponse.ok) {
+        const errorData = await sessionResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to create PDF session');
       }
 
-      const blob = await response.blob();
-      if (blob.type !== 'application/pdf') {
-        throw new Error('Server did not return a valid PDF file');
+      const { sessionId } = await sessionResponse.json();
+      
+      const downloadUrl = `/api/download-pdf/${sessionId}`;
+      const pdfResponse = await fetch(downloadUrl);
+      
+      if (!pdfResponse.ok) {
+        const errText = await pdfResponse.text();
+        throw new Error(`Failed to download PDF: ${errText}`);
       }
       
+      const contentType = pdfResponse.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/pdf')) {
+        throw new Error('Server did not return a valid PDF file.');
+      }
+      
+      const blob = await pdfResponse.blob();
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const baseName = companyName ? companyName.replace(/\s+/g, '_') : (targetRole || "Expert").replace(/\s+/g, '_');
+      const link = document.createElement('a');
+      link.href = url;
       
-      a.href = url;
-      a.download = `Professional_Resume_${baseName}.pdf`;
-      document.body.appendChild(a);
-      a.click();
+      const parts = [];
+      if (targetRole) parts.push(targetRole.replace(/\s+/g, '_'));
+      if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
+      if (parts.length === 0) parts.push('Resume');
       
-      // Small delay before cleanup to ensure download starts correctly
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      }, 1000);
+      link.download = `${parts.join('_')}_Harnish_Jariwala.pdf`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('PDF Generation Error:', err);
-      alert('Failed to generate PDF. Please try again.');
+      showToast(err.message || 'Failed to generate PDF. Please try again.', 'error');
     } finally {
       // Restore active section
       if (previousActiveSection) {
@@ -1025,17 +1099,19 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     setFileName(null);
   };
 
-  const renderSection = (sectionId: string) => {
+  const renderSection = (sectionId: string, customExp?: any[], isContinuation?: boolean) => {
     switch (sectionId) {
       case 'header':
-        const personalInfo: any = results[activeAudience!]?.personal_info || {
-          name: profileName || data.personal_info.name,
-          location: profileLocation || data.personal_info.location,
-          email: profileEmail || data.personal_info.email,
-          phone: profilePhone || data.personal_info.phone,
-          linkedin: profileLinkedIn || data.personal_info.linkedin,
-          linkedinText: profileLinkedInText
-        };
+        const personalInfo = {
+          ...(results[activeAudience!]?.personal_info as any || {}),
+          name: profileName || results[activeAudience!]?.personal_info?.name || data.personal_info.name,
+          location: profileLocation || results[activeAudience!]?.personal_info?.location || data.personal_info.location,
+          email: profileEmail || results[activeAudience!]?.personal_info?.email || data.personal_info.email,
+          phone: profilePhone || results[activeAudience!]?.personal_info?.phone || data.personal_info.phone,
+          linkedin: profileLinkedIn || results[activeAudience!]?.personal_info?.linkedin || data.personal_info.linkedin,
+          linkedinText: profileLinkedInText || results[activeAudience!]?.personal_info?.linkedinText || '',
+          summary: results[activeAudience!]?.summary || data.personal_info.summary || ''
+        } as any;
         return (
           <div 
             key="header"
@@ -1056,13 +1132,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             </h1>
             <div className="font-semibold opacity-80 border-t-2 border-black/10 pt-3 flex justify-center items-center gap-x-4 gap-y-1 flex-wrap" style={{ fontSize: '11px', lineHeight: '1.2' }}>
               <span className="whitespace-nowrap">{personalInfo.location}</span>
-              <span className="opacity-30">|</span>
+              <span className="opacity-30">•</span>
               <span className="whitespace-nowrap">{personalInfo.email}</span>
-              <span className="opacity-30">|</span>
+              <span className="opacity-30">•</span>
               <span className="whitespace-nowrap">{personalInfo.phone}</span>
               {personalInfo.linkedin && (
                 <>
-                  <span className="opacity-30">|</span>
+                  <span className="opacity-30">•</span>
                   <span className="whitespace-nowrap">LinkedIn: {personalInfo.linkedinText || personalInfo.linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</span>
                 </>
               )}
@@ -1103,8 +1179,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               lineHeight: getSectionStyle('skills').lineHeight,
               color: getSectionStyle('skills').color,
               letterSpacing: `${getSectionStyle('skills').letterSpacing}em`,
-              padding: `${getSectionStyle('skills').padding}px`,
-              marginBottom: `${getSectionStyle('skills').margin}px`,
+              padding: `${Math.max(4, getSectionStyle('skills').padding / 2)}px`,
+              marginBottom: `${Math.max(4, getSectionStyle('skills').margin / 2)}px`,
               fontSize: `${getSectionStyle('skills').fontSize}px`,
             }}
           >
@@ -1112,20 +1188,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               Core Competencies
             </h2>
             {results[activeAudience!]?.skills && !Array.isArray(results[activeAudience!].skills) ? (
-              <div className="flex flex-col gap-1.5">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                 {Object.entries(results[activeAudience!].skills).map(([category, items]) => (
                   <div key={category} className="text-[11px] leading-tight">
-                    <span className="font-bold uppercase text-emerald-700 mr-2">{category}:</span>
-                    <span className="opacity-90">{(items as unknown as string[]).join(' • ')}</span>
+                    <div className="font-bold uppercase text-gray-600 mb-1">{category}</div>
+                    <div className="opacity-90">{(items as unknown as string[]).join(', ')}</div>
                   </div>
                 ))}
               </div>
             ) : typeof data.skills === 'object' && !Array.isArray(data.skills) ? (
-              <div className="flex flex-col gap-1.5">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                 {Object.entries(data.skills as any).map(([category, items]) => (
                   <div key={category} className="text-[11px] leading-tight">
-                    <span className="font-bold uppercase text-emerald-700 mr-2">{category}:</span>
-                    <span className="opacity-90">{(items as unknown as string[]).join(' • ')}</span>
+                    <div className="font-bold uppercase text-gray-600 mb-1">{category}</div>
+                    <div className="opacity-90">{(items as unknown as string[]).join(', ')}</div>
                   </div>
                 ))}
               </div>
@@ -1177,9 +1253,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'experience':
+        const allExp = customExp || results[activeAudience!]?.experience || data.experience;
+        if (!allExp || allExp.length === 0) return null;
         return (
           <div 
-            key="experience"
+            key={isContinuation ? "experience-split-2" : "experience"}
             onClick={() => formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: 'experience' })}
             className={`cursor-pointer transition-all rounded p-2 -m-2 mb-2 resume-section ${activeSection === 'experience' ? 'bg-emerald-50/50 outline-dashed outline-1 outline-emerald-500/30' : 'hover:bg-black/5'}`}
             style={{ 
@@ -1192,33 +1270,35 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               fontSize: `${getSectionStyle('experience').fontSize}px`,
             }}
           >
-            <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
-              Professional Experience
-            </h2>
-            {(() => {
-              const allExp = results[activeAudience!]?.experience || data.experience;
-              return allExp.map((exp, i) => (
-                <div key={i} className="mb-3 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
-                  <div className="flex justify-between font-bold items-baseline mb-0.5">
-                    <span style={{ fontSize: '13px' }}>{exp.role}</span>
-                    <span className="opacity-70 font-medium italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
-                  </div>
-                  <div className="font-semibold mb-2 text-emerald-700" style={{ fontSize: '12px' }}>{exp.company}</div>
-                  <div className="space-y-1">
-                    {exp.bullets.map((b, bi) => (
-                      <div key={bi} className="resume-bullet-item">
-                        <div className="resume-bullet-dot" />
-                        <span className="resume-bullet-text opacity-90 leading-relaxed">{b}</span>
-                      </div>
-                    ))}
-                  </div>
+            {!isContinuation && (
+              <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
+                Professional Experience
+              </h2>
+            )}
+            {allExp.map((exp: any, i: number) => (
+              <div key={i} className="mb-3 last:mb-0">
+                <div className="flex justify-between font-bold items-baseline mb-0.5">
+                  <span style={{ fontSize: '13px' }}>{exp.role}</span>
+                  <span className="opacity-70 font-medium italic" style={{ fontSize: '11px' }}>{exp.duration}</span>
                 </div>
-              ));
-            })()}
+                <div className="font-semibold mb-2 text-emerald-700" style={{ fontSize: '12px' }}>{exp.company}</div>
+                <div className="space-y-1">
+                  {exp.bullets.map((b: string, bi: number) => (
+                    <div key={bi} className="resume-bullet-item">
+                      <div className="resume-bullet-dot" />
+                      <span className="resume-bullet-text opacity-90 leading-relaxed">{b}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         );
       case 'projects':
-        if (!results[activeAudience!]?.projects || results[activeAudience!].projects.length === 0) return null;
+        const allProjects = (results[activeAudience!]?.projects && results[activeAudience!]?.projects.length > 0) 
+          ? results[activeAudience!]?.projects 
+          : data.projects;
+        if (!allProjects || allProjects.length === 0) return null;
         return (
           <div 
             key="projects"
@@ -1238,9 +1318,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               Key Strategic Projects
             </h2>
             <div className="space-y-3">
-              {results[activeAudience!].projects.map((proj, i) => (
-                <div key={i} className="mb-3 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
-                  <div className="font-bold mb-1 text-emerald-700" style={{ fontSize: '13px' }}>
+              {allProjects.map((proj: any, i: number) => (
+                <div key={i} className="mb-3 last:mb-0">
+                  <div className="font-bold mb-1" style={{ fontSize: '13px' }}>
                     {typeof proj === 'string' ? proj : (proj as any).title}
                   </div>
                   <div className="opacity-90 leading-relaxed">
@@ -1252,6 +1332,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'education':
+        const allEdu = (results[activeAudience!]?.education && results[activeAudience!]?.education.length > 0) 
+          ? results[activeAudience!]?.education 
+          : data.education || [];
+        if (!allEdu || allEdu.length === 0) return null;
         return (
           <div 
             key="education"
@@ -1270,7 +1354,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <h2 className="font-bold mb-1 uppercase tracking-[0.1em] border-b-2 border-black/10 pb-1" style={{ fontSize: '15px' }}>
               Education
             </h2>
-            {(results[activeAudience!]?.education || data.education || []).map((edu, i) => (
+            {allEdu.map((edu: any, i: number) => (
               <div key={i} className="mb-1 last:mb-0" style={{ pageBreakInside: 'avoid' }}>
                 <div className="resume-bullet-item">
                   <div className="resume-bullet-dot" />
@@ -1289,6 +1373,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
   return (
     <div className={`min-h-screen transition-colors duration-300 overflow-x-hidden ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-white text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      {confirmDialog && (
+        <ConfirmDialog 
+          message={confirmDialog.message} 
+          onConfirm={confirmDialog.onConfirm} 
+          onCancel={confirmDialog.onCancel} 
+          isDarkMode={isDarkMode} 
+        />
+      )}
       {/* Header */}
       <header className={`border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-[#0A0A0A]/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
         <div className="w-full px-4 md:px-8 h-16 flex items-center justify-between">
@@ -1957,19 +2050,36 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           {isSavingProfile ? 'Saving...' : 'Save Profile & Master Resume'}
                         </button>
 
+                        <div className="mt-4">
+                          <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Upload Master Resume (PDF, JSON, TXT)</label>
+                          <input 
+                            type="file"
+                            accept=".pdf,.json,.txt"
+                            onChange={handleFileUpload}
+                            className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                            }`}
+                          />
+                        </div>
+
                         <button
-                          onClick={async () => {
-                            if (confirm("Are you sure you want to clear your saved API keys?")) {
-                              setApiKey('');
-                              setOpenaiApiKey('');
-                              setEncryptedApiKey('');
-                              setIsApiKeySaved(false);
-                              // Also update Firestore
-                              await setDoc(doc(db, 'users', user.uid), {
-                                encryptedApiKey: ''
-                              }, { merge: true });
-                              alert("API keys cleared.");
-                            }
+                          onClick={() => {
+                            setConfirmDialog({
+                              message: "Are you sure you want to clear your saved API keys?",
+                              onConfirm: async () => {
+                                setConfirmDialog(null);
+                                setApiKey('');
+                                setOpenaiApiKey('');
+                                setEncryptedApiKey('');
+                                setIsApiKeySaved(false);
+                                // Also update Firestore
+                                await setDoc(doc(db, 'users', user.uid), {
+                                  encryptedApiKey: ''
+                                }, { merge: true });
+                                showToast("API keys cleared.", "success");
+                              },
+                              onCancel: () => setConfirmDialog(null)
+                            });
                           }}
                           className="w-full py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20"
                         >
@@ -2703,9 +2813,23 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       >
                         <div 
                           id="resume-container"
-                          className={`resume-page transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
+                          className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                         >
-                          {sectionOrder.map((sectionId) => renderSection(sectionId))}
+                          {/* Page 1 */}
+                          <div className={`resume-page ${isDownloading ? 'page-break-after-always' : 'mb-8'}`}>
+                            {renderSection('header')}
+                            {renderSection('summary')}
+                            {renderSection('skills')}
+                            {renderSection('certifications')}
+                            {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(0, 3))}
+                          </div>
+
+                          {/* Page 2 */}
+                          <div className="resume-page">
+                            {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(3), true)}
+                            {renderSection('projects')}
+                            {renderSection('education')}
+                          </div>
                         </div>
                       </div>
                     </div>

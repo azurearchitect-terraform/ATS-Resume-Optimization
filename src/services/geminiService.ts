@@ -10,6 +10,7 @@ export interface OptimizationResult {
     email: string;
     phone: string;
     linkedin: string;
+    linkedinText?: string;
   };
   summary: string;
   skills: {
@@ -85,30 +86,83 @@ function extractJson(text: string): string {
   }
 }
 
-async function callBackendAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
+async function callAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
   if (!encryptedKey) {
     throw new Error("API Key is missing. Please save your profile first.");
   }
 
-  const response = await fetch('/api/optimize', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      model,
-      engine,
-      encryptedKey
-    })
-  });
+  if (engine === 'gemini') {
+    // Gemini MUST be called from the frontend as per guidelines
+    try {
+      // First, get the decrypted key from the backend
+      const decryptResponse = await fetch('/api/decrypt-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ encryptedKey })
+      });
+      
+      if (!decryptResponse.ok) {
+        throw new Error("Failed to decrypt API key for frontend use");
+      }
+      
+      const { keys } = await decryptResponse.json();
+      const apiKey = keys.gemini;
+      
+      if (!apiKey) {
+        throw new Error("Gemini API key is missing. Please save your profile first.");
+      }
 
-  if (!response.ok) {
-    const errData = await response.json();
-    const errorMessage = errData.details || errData.error || "Backend AI Call Failed";
-    throw new Error(errorMessage);
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const tools: any[] = [];
+      if (prompt.toLowerCase().includes('http') || prompt.toLowerCase().includes('url')) {
+        tools.push({ urlContext: {} });
+        tools.push({ googleSearch: {} });
+      }
+
+      const response = await ai.models.generateContent({
+        model: model || "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
+          tools: tools.length > 0 ? tools : undefined
+        }
+      });
+
+      return {
+        result: response!.text,
+        usage: {
+          promptTokenCount: response!.usageMetadata?.promptTokenCount || 0,
+          candidatesTokenCount: response!.usageMetadata?.candidatesTokenCount || 0,
+          totalTokenCount: response!.usageMetadata?.totalTokenCount || 0
+        }
+      };
+    } catch (error: any) {
+      console.error("Gemini Frontend Error:", error);
+      throw error;
+    }
+  } else {
+    // OpenAI and other engines can stay on the backend
+    const response = await fetch('/api/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        model,
+        engine,
+        encryptedKey
+      })
+    });
+
+    if (!response.ok) {
+      const errData = await response.json();
+      const errorMessage = errData.details || errData.error || "Backend AI Call Failed";
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    return data;
   }
-
-  const data = await response.json();
-  return data;
 }
 
 export async function fetchJobDescription(url: string, config: RouterConfig): Promise<string> {
@@ -123,7 +177,7 @@ JOB URL: ${url}
 `;
 
   try {
-    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     return data.result || "";
   } catch (error) {
     console.error("Error fetching job description:", error);
@@ -202,12 +256,12 @@ CRITICAL ISSUES TO RESOLVE:
 * Keep skills short (1–3 words).
 
 LAYOUT-SAFE CONTENT RULES (MANDATORY):
-- SUMMARY: Minimum 4-5 strong lines, leadership-focused.
-- SKILLS: Max 12–15 items total across categories.
-- EXPERIENCE: Include ALL roles from the input. For the first role, provide at least 7 bullets. For the second, at least 6. For the third and fourth, at least 5. For all other roles, provide at least 3 bullets. Each bullet max 12 words. Focus on impact. Use quantifiable metrics (e.g., %) only when appropriate and realistic, avoiding an unnatural overload of numbers.
-- CERTIFICATIONS: Max 4 items.
-- PROJECTS: Max 2 high-impact technical projects. Use the projects from the Master Resume as the source. For each project, generate a concise and impactful 1-2 sentence description if the input is brief or missing. Focus on quantifiable achievements (e.g., "Reduced latency by 40%") and technical details (e.g., "using Azure Kubernetes Service and Terraform") relevant to a Cloud & Collaboration Engineer role. Provide a title and the description.
-- EDUCATION: Properly reframed.
+- SUMMARY: Comprehensive 6-8 line summary, leadership-focused, highlighting key strategic impact and technical vision.
+- SKILLS: Max 15–20 items total across categories.
+- EXPERIENCE: Include ALL roles from the input. For the 3 most recent roles, provide at most 7 high-impact bullets. For all other roles, provide at most 3-4 bullets. Each bullet max 15 words. Focus on impact and technical depth. Use quantifiable metrics (e.g., %) only when appropriate and realistic, avoiding an unnatural overload of numbers.
+- CERTIFICATIONS: Max 5 items.
+- PROJECTS: Max 3 high-impact technical projects. Use the projects from the Master Resume as the source. You MUST include this section if projects are present in the input.
+- EDUCATION: Properly reframed. You MUST include this section.
 
 INPUT:
 RESUME: ${resumeText}
@@ -229,9 +283,10 @@ RECRUITER SIMULATION MODE: ${recruiterSimulationMode}
 4. Optimize all sections following the STRICT RULES above.
 5. Ensure ATS keyword density is improved naturally.
 6. Calculate approximate optimized match score (0–100).
-${recruiterSimulationMode ? '7. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
+7. Ensure PROJECTS and EDUCATION are included in the final JSON.
+${recruiterSimulationMode ? '8. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
 
-Return the result in the following JSON format: { "personal_info": { "name": string, "location": string, "email": string, "phone": string, "linkedin": string }, "summary": string, "skills": { "Infrastructure": string[], "DevSecOps": string[], "Governance": string[], "Observability": string[] }, "experience": { "role": string, "company": string, "duration": string, "bullets": string[] }[], "projects": { "title": string, "description": string }[], "education": string[], "certifications": string[], "ats_keywords_from_jd": string[], "ats_keywords_added_to_resume": string[], "keyword_gap": string[], "match_score": number, "baseline_score": number, "improvement_notes": string[], "audience_alignment_notes": string, "rejection_reasons": string[] }
+Return the result in the following JSON format: { "personal_info": { "name": string, "location": string, "email": string, "phone": string, "linkedin": string, "linkedinText": string }, "summary": string, "skills": { "Infrastructure": string[], "DevSecOps": string[], "Governance": string[], "Observability": string[] }, "experience": { "role": string, "company": string, "duration": string, "bullets": string[] }[], "projects": { "title": string, "description": string }[], "education": string[], "certifications": string[], "ats_keywords_from_jd": string[], "ats_keywords_added_to_resume": string[], "keyword_gap": string[], "match_score": number, "baseline_score": number, "improvement_notes": string[], "audience_alignment_notes": string, "rejection_reasons": string[] }
 `;
 
   const maxRetries = 5;
@@ -240,7 +295,7 @@ Return the result in the following JSON format: { "personal_info": { "name": str
 
   while (retryCount <= maxRetries) {
     try {
-      const data = await callBackendAI(prompt, currentModel, routedConfig.engine, routedConfig.apiKey);
+      const data = await callAI(prompt, currentModel, routedConfig.engine, routedConfig.apiKey);
       const resultText = extractJson(data.result || "");
 
       if (!resultText) {
@@ -304,7 +359,7 @@ export async function analyzeSkillGap(
     `;
 
   try {
-    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     return JSON.parse(resultText || '{"missing":[], "present":[]}');
   } catch (error) {
@@ -340,7 +395,7 @@ export async function analyzeBestAudiences(
   `;
 
   try {
-    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
@@ -365,7 +420,7 @@ export async function generateInterviewQuestions(
     `;
 
   try {
-    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.questions || []);
@@ -396,7 +451,7 @@ export async function generateCoverLetter(
     `;
 
   try {
-    const data = await callBackendAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     return data.result || "";
   } catch (error) {
     console.error("Error generating cover letter:", error);

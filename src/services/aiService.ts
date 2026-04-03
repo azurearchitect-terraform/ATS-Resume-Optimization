@@ -5,7 +5,7 @@ export const optimizeFullResume = async (
   resumeData: any,
   jobDescription: string,
   targetRole: string,
-  aiEngine: string = "gemini-3.1-pro-preview",
+  aiEngine: string = "gemini-3-flash-preview",
   audience: string = "Enterprise"
 ) => {
   try {
