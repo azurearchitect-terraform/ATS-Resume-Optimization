@@ -9,7 +9,8 @@ export type TaskType =
   | 'multi_audience'
   | 'recruiter_simulation'
   | 'interview_questions'
-  | 'cover_letter';
+  | 'cover_letter'
+  | 'recruiter_message';
 
 export interface RouterConfig {
   mode: EngineType | 'production';
@@ -41,6 +42,7 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
     case 'recruiter_simulation':
     case 'interview_questions':
     case 'cover_letter':
+    case 'recruiter_message':
       selectedEngine = 'openai';
       break;
       

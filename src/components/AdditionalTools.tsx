@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter } from '../services/geminiService';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage } from '../services/geminiService';
 
 interface AdditionalToolsProps {
   resumeText: string;
@@ -11,6 +11,7 @@ interface AdditionalToolsProps {
   selectedEngine: EngineType;
   onRestore?: (version: any) => void;
   currentResults?: any;
+  setResumeText: (text: string) => void;
 }
 
 export const AdditionalTools: React.FC<AdditionalToolsProps> = ({ 
@@ -21,12 +22,14 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   engineConfig, 
   selectedEngine,
   onRestore,
-  currentResults
+  currentResults,
+  setResumeText
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter'>('skillGap');
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage'>('skillGap');
   const [skillGap, setSkillGap] = useState<{missing: string[], present: string[]} | null>(null);
   const [interviewQuestions, setInterviewQuestions] = useState<string[]>([]);
   const [coverLetter, setCoverLetter] = useState<string>('');
+  const [recruiterMessage, setRecruiterMessage] = useState<string>('');
   const [history, setHistory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +72,12 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(false);
   };
 
+  const addMissingSkills = () => {
+    if (!skillGap || skillGap.missing.length === 0) return;
+    const newResumeText = `${resumeText}\n\nSkills: ${skillGap.missing.join(', ')}`;
+    setResumeText(newResumeText);
+  };
+
   const runInterviewQuestions = async () => {
     if (!resumeText || !jobDescription) {
       setError("Please ensure both resume and job description are provided.");
@@ -94,6 +103,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Failed to generate interview questions.");
+    }
+    setIsLoading(false);
+  };
+
+  const runRecruiterMessage = async () => {
+    if (!resumeText || !jobDescription) {
+      setError("Please ensure both resume and job description are provided.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    try {
+      const result = await generateRecruiterMessage(jobDescription, resumeText, {
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
+      });
+      setRecruiterMessage(result);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to generate recruiter message.");
     }
     setIsLoading(false);
   };
@@ -161,49 +199,60 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
 
   return (
     <div className={`rounded-xl border p-4 ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
-      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-6">
         <button 
           onClick={() => setActiveTab('skillGap')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
             activeTab === 'skillGap' 
               ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
           }`}
         >
-          <Zap className="w-4 h-4"/>
+          <Zap className="w-5 h-5"/>
           Gap Analysis
         </button>
         <button 
           onClick={() => setActiveTab('interview')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
             activeTab === 'interview' 
               ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
           }`}
         >
-          <Brain className="w-4 h-4"/>
+          <Brain className="w-5 h-5"/>
           Interview
         </button>
         <button 
           onClick={() => setActiveTab('coverLetter')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
             activeTab === 'coverLetter' 
               ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
           }`}
         >
-          <FileText className="w-4 h-4"/>
+          <FileText className="w-5 h-5"/>
           Cover Letter
         </button>
         <button 
-          onClick={() => setActiveTab('history')} 
-          className={`flex-1 flex items-center justify-center gap-2 p-2 rounded text-[10px] sm:text-xs font-bold transition-all ${
-            activeTab === 'history' 
+          onClick={() => setActiveTab('recruiterMessage')} 
+          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'recruiterMessage' 
               ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:bg-white/5 hover:text-white' : 'text-black/40 hover:bg-black/5 hover:text-black')
+              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
           }`}
         >
-          <History className="w-4 h-4"/>
+          <FileText className="w-5 h-5"/>
+          Recruiter Msg
+        </button>
+        <button 
+          onClick={() => setActiveTab('history')} 
+          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'history' 
+              ? 'bg-emerald-500 text-black' 
+              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
+          }`}
+        >
+          <History className="w-5 h-5"/>
           Versions
         </button>
       </div>
@@ -220,7 +269,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           <button 
             onClick={runSkillGap} 
             disabled={isLoading} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-2 rounded-lg text-xs transition-colors"
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
           >
             {isLoading ? 'Analyzing...' : 'Analyze Skill Gap'}
           </button>
@@ -247,6 +296,12 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                     <span key={i} className="px-2 py-0.5 rounded bg-red-500/10 text-red-500 text-[9px]">{s}</span>
                   ))}
                 </div>
+                <button 
+                  onClick={addMissingSkills}
+                  className="mt-2 w-full bg-red-500 hover:bg-red-400 text-black font-bold py-1 rounded text-[10px] transition-colors"
+                >
+                  Add Missing Skills
+                </button>
               </div>
             </div>
           )}
@@ -258,7 +313,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           <button 
             onClick={runInterviewQuestions} 
             disabled={isLoading} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-2 rounded-lg text-xs transition-colors"
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
           >
             {isLoading ? 'Generating...' : 'Generate Questions'}
           </button>
@@ -280,7 +335,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           <button 
             onClick={runCoverLetter} 
             disabled={isLoading} 
-            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-2 rounded-lg text-xs transition-colors"
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
           >
             {isLoading ? 'Generating...' : 'Generate Cover Letter'}
           </button>
@@ -305,6 +360,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
         </div>
       )}
 
+      {activeTab === 'recruiterMessage' && (
+        <div className="space-y-4">
+          <button 
+            onClick={runRecruiterMessage} 
+            disabled={isLoading} 
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
+          >
+            {isLoading ? 'Generating...' : 'Generate Message'}
+          </button>
+          {recruiterMessage && (
+            <div className="space-y-2">
+              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                {recruiterMessage}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(recruiterMessage);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
+                >
+                  <Copy className="w-3 h-3" />
+                  Copy Text
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {activeTab === 'history' && (
         <div className="space-y-4">
           <div className="flex gap-2">
@@ -319,7 +403,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
             />
             <button 
               onClick={saveVersion} 
-              className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-2 rounded-lg text-[10px] transition-colors whitespace-nowrap"
+              className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-3 rounded-xl text-[10px] transition-colors whitespace-nowrap"
             >
               Save Version
             </button>

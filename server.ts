@@ -167,6 +167,7 @@ async function startServer() {
       console.log(`Using ${engine} key (masked): ${apiKey.substring(0, 4)}****`);
       
       if (engine === 'openai') {
+        const isJsonRequested = prompt.toLowerCase().includes('json');
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -176,7 +177,7 @@ async function startServer() {
           body: JSON.stringify({
             model: model || "gpt-4o-mini",
             messages: [{ role: "user", content: prompt }],
-            response_format: { type: "json_object" }
+            ...(isJsonRequested ? { response_format: { type: "json_object" } } : {})
           })
         });
         

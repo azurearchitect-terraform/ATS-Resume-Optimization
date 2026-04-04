@@ -38,6 +38,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableSection } from './components/SortableSection';
 import { AdditionalTools } from './components/AdditionalTools';
+import { StatusIndicator } from './components/StatusIndicator';
 import { useResumeStore } from './store';
 import { ResumeData } from './types';
 import { detectOverflow } from './overflowDetection';
@@ -1019,10 +1020,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         })
         .join("\n");
 
-      // Get any custom fonts injected via @font-face
-      const customFonts = Array.from(document.querySelectorAll('style'))
-        .filter(s => s.innerHTML.includes('@font-face'))
-        .map(s => s.innerHTML)
+      // Get all styles and imports
+      const allStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+        .map(el => {
+          if (el.tagName === 'STYLE') {
+            return el.innerHTML;
+          } else if (el.tagName === 'LINK') {
+            // For link tags, we can't easily get the content, but we can try to include the import if it's a font
+            const href = (el as HTMLLinkElement).href;
+            if (href.includes('fonts.googleapis.com')) {
+              return `@import url('${href}');`;
+            }
+          }
+          return '';
+        })
         .join('\n');
 
       const sessionResponse = await fetch('/api/pdf-session', {
@@ -1032,8 +1043,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         },
         body: JSON.stringify({
           html: element.outerHTML,
-          css: styles,
-          fonts: customFonts
+          css: allStyles,
+          fonts: '' // We are including everything in css now
         }),
       });
 
@@ -2458,6 +2469,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               )}
               {activeTab === 'tools' && (
                 <div className="space-y-6">
+                  <StatusIndicator
+                    resumeText={getEffectiveResumeText()}
+                    engineConfig={engineConfig}
+                    isDarkMode={isDarkMode}
+                  />
                   <AdditionalTools 
                     resumeText={getEffectiveResumeText()}
                     jobDescription={jobDescription}
@@ -2467,6 +2483,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     selectedEngine={selectedEngine as any}
                     onRestore={restoreVersion}
                     currentResults={results}
+                    setResumeText={setResumeText}
                   />
                   {Object.keys(results).length > 0 && (
                     <div className={`mb-6 rounded-xl border overflow-hidden transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>

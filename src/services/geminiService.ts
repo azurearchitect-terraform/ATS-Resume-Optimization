@@ -430,6 +430,32 @@ export async function generateInterviewQuestions(
   }
 }
 
+export async function generateRecruiterMessage(
+  jobDescription: string,
+  resumeText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('recruiter_message', config);
+  const prompt = `
+      You are an expert career coach.
+      Write a short, professional, and engaging message for a recruiter to accompany a resume application.
+      The message should be concise (max 100 words), highlight the candidate's interest in the role, and briefly mention why they are a good fit based on the job description and resume.
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+      
+      Return the message as a plain text string. Do not include any extra conversational text.
+    `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return data.result || "";
+  } catch (error) {
+    console.error("Error generating recruiter message:", error);
+    return "";
+  }
+}
+
 export async function generateCoverLetter(
   jobDescription: string,
   resumeText: string,
