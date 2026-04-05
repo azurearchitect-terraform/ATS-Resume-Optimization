@@ -409,26 +409,28 @@ export default function App() {
       const res = results[activeAudience];
       setData({
         personal_info: {
-          name: profileName,
-          location: profileLocation,
-          email: profileEmail,
-          phone: profilePhone,
-          summary: res.summary
+          name: profileName || res.personal_info?.name || '',
+          location: profileLocation || res.personal_info?.location || '',
+          email: profileEmail || res.personal_info?.email || '',
+          phone: profilePhone || res.personal_info?.phone || '',
+          linkedin: profileLinkedIn || res.personal_info?.linkedin || '',
+          linkedinText: profileLinkedInText || res.personal_info?.linkedinText || '',
+          summary: res.summary || ''
         },
-        experience: res.experience.map((e, i) => ({ ...e, id: `exp_${i}` })),
-        skills: res.skills as any, // Cast to any to handle both structures
+        experience: (res.experience || []).map((e: any, i: number) => ({ ...e, id: `exp_${i}` })),
+        skills: (res.skills || {}) as any, // Cast to any to handle both structures
         education: (res.education && res.education.length > 0) ? res.education as any : data.education,
         projects: (res.projects && res.projects.length > 0) 
-          ? res.projects?.map(p => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any
+          ? res.projects?.map((p: any) => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any
           : data.projects,
         certifications: res.certifications || []
       });
     }
-  }, [activeAudience, results, setData, profileName, profileLocation, profileEmail, profilePhone]);
+  }, [activeAudience, results, setData, profileName, profileLocation, profileEmail, profilePhone, profileLinkedIn, profileLinkedInText]);
 
   const overflow = detectOverflow(pages);
   const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({});
-  const [showInsights, setShowInsights] = useState(false);
+  const [showInsights, setShowInsights] = useState(true);
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
     gemini: { model: 'gemini-3.1-pro-preview', apiKey: '' },
@@ -446,6 +448,68 @@ export default function App() {
   const [configWidth, setConfigWidth] = useState(40); // percentage
   const [isResizingWidth, setIsResizingWidth] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+
+  const saveResumeVersion = (customName?: string) => {
+    const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
+    
+    // Avoid saving if identical to last entry
+    const lastEntry = savedHistory[0];
+    if (lastEntry && 
+        lastEntry.data.resumeText === resumeText && 
+        JSON.stringify(lastEntry.data.results) === JSON.stringify(results)) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    let generatedName = customName;
+    
+    if (!generatedName) {
+      if (companyName && targetRole) {
+        generatedName = `${companyName} - ${targetRole} - ${new Date(timestamp).toLocaleString()}`;
+      } else if (companyName) {
+        generatedName = `${companyName} - ${new Date(timestamp).toLocaleString()}`;
+      } else if (targetRole) {
+        generatedName = `${targetRole} - ${new Date(timestamp).toLocaleString()}`;
+      } else {
+        generatedName = `Auto-save - ${new Date(timestamp).toLocaleString()}`;
+      }
+    }
+
+    const newVersion = {
+      id: Date.now(),
+      timestamp,
+      name: generatedName,
+      data: {
+        resumeText,
+        jobDescription,
+        targetRole,
+        companyName,
+        results,
+        formatting: formattingState
+      }
+    };
+
+    const newHistory = [newVersion, ...savedHistory].slice(0, 50);
+    localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
+    window.dispatchEvent(new CustomEvent('resumeHistoryUpdated'));
+  };
+
+  // Auto-save to history mechanism
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  useEffect(() => {
+    if (!resumeText || resumeText.length < 50) return; // Don't save empty or very short resumes
+    
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    
+    autoSaveTimerRef.current = setTimeout(() => {
+      saveResumeVersion();
+    }, 30000); // Auto-save every 30 seconds of inactivity
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [resumeText, jobDescription, targetRole, companyName, results, formattingState]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -492,7 +556,7 @@ export default function App() {
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [isAutoZoom, setIsAutoZoom] = useState(true);
-  const [customFonts, setCustomFonts] = useState<{name: string, url: string}[]>([]);
+  const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
 
   const handleFontUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -502,17 +566,18 @@ export default function App() {
     reader.onload = (event) => {
       const base64 = event.target?.result as string;
       const fontName = file.name.split('.')[0].replace(/[^a-zA-Z0-9]/g, '');
+      const format = file.name.endsWith('.woff2') ? 'woff2' : file.name.endsWith('.woff') ? 'woff' : 'truetype';
       
       const style = document.createElement('style');
       style.innerHTML = `
         @font-face {
           font-family: '${fontName}';
-          src: url('${base64}') format('${file.name.endsWith('.woff2') ? 'woff2' : file.name.endsWith('.woff') ? 'woff' : 'truetype'}');
+          src: url('${base64}') format('${format}');
         }
       `;
       document.head.appendChild(style);
 
-      setCustomFonts(prev => [...prev, { name: fontName, url: base64 }]);
+      setCustomFonts(prev => [...prev, { name: fontName, url: base64, format }]);
     };
     reader.readAsDataURL(file);
   };
@@ -862,6 +927,9 @@ export default function App() {
       });
 
       await Promise.all(optimizationPromises);
+      
+      // Save version immediately after optimization
+      saveResumeVersion(`Optimized - ${companyName || 'Resume'} - ${new Date().toLocaleString()}`);
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Optimization aborted');
@@ -997,6 +1065,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     const element = document.getElementById('resume-container');
     if (!element) return;
 
+    // Save version automatically
+    saveResumeVersion();
+
+
     // Temporarily clear active section for clean PDF
     const previousActiveSection = activeSection;
     formattingDispatch({ type: 'SET_ACTIVE_SECTION', sectionId: null });
@@ -1044,7 +1116,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         body: JSON.stringify({
           html: element.outerHTML,
           css: allStyles,
-          fonts: '' // We are including everything in css now
+          fonts: customFonts.map(font => `
+            @font-face {
+              font-family: '${font.name}';
+              src: url('${font.url}') format('${font.format}');
+            }
+          `).join('\n')
         }),
       });
 
@@ -2478,12 +2555,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     resumeText={getEffectiveResumeText()}
                     jobDescription={jobDescription}
                     targetRole={targetRole}
+                    companyName={companyName}
                     isDarkMode={isDarkMode}
                     engineConfig={engineConfig}
                     selectedEngine={selectedEngine as any}
                     onRestore={restoreVersion}
                     currentResults={results}
+                    activeAudience={activeAudience}
                     setResumeText={setResumeText}
+                    runOptimization={handleOptimize}
                   />
                   {Object.keys(results).length > 0 && (
                     <div className={`mb-6 rounded-xl border overflow-hidden transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>

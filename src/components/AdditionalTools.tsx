@@ -6,24 +6,30 @@ interface AdditionalToolsProps {
   resumeText: string;
   jobDescription: string;
   targetRole: string;
+  companyName?: string;
   isDarkMode: boolean;
   engineConfig: Record<string, any>;
   selectedEngine: EngineType;
   onRestore?: (version: any) => void;
   currentResults?: any;
+  activeAudience?: string | null;
   setResumeText: (text: string) => void;
+  runOptimization: () => Promise<void>;
 }
 
 export const AdditionalTools: React.FC<AdditionalToolsProps> = ({ 
   resumeText, 
   jobDescription, 
   targetRole,
+  companyName,
   isDarkMode, 
   engineConfig, 
   selectedEngine,
   onRestore,
   currentResults,
-  setResumeText
+  activeAudience,
+  setResumeText,
+  runOptimization
 }) => {
   const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage'>('skillGap');
   const [skillGap, setSkillGap] = useState<{missing: string[], present: string[]} | null>(null);
@@ -34,13 +40,32 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (activeAudience && currentResults && currentResults[activeAudience]) {
+      const res = currentResults[activeAudience];
+      // If we have keyword gap from the main optimization, use it
+      if (res.keyword_gap && res.keyword_gap.length > 0) {
+        setSkillGap({
+          missing: res.keyword_gap,
+          present: res.ats_keywords_added_to_resume || []
+        });
+      }
+    }
+  }, [activeAudience, currentResults]);
+
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [saveName, setSaveName] = useState('');
 
   useEffect(() => {
-    const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
-    setHistory(savedHistory);
+    const loadHistory = () => {
+      const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
+      setHistory(savedHistory);
+    };
+    loadHistory();
+    
+    window.addEventListener('resumeHistoryUpdated', loadHistory);
+    return () => window.removeEventListener('resumeHistoryUpdated', loadHistory);
   }, []);
 
   const runSkillGap = async () => {
@@ -52,7 +77,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(true);
     try {
       const result = await analyzeSkillGap(resumeText, jobDescription, {
-        mode: selectedEngine,
+        mode: 'gemini',
         geminiConfig: {
           engine: 'gemini',
           model: engineConfig.gemini.model,
@@ -72,10 +97,19 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(false);
   };
 
-  const addMissingSkills = () => {
-    if (!skillGap || skillGap.missing.length === 0) return;
-    const newResumeText = `${resumeText}\n\nSkills: ${skillGap.missing.join(', ')}`;
+  const [selectedMissingSkills, setSelectedMissingSkills] = useState<string[]>([]);
+
+  const toggleSkill = (skill: string) => {
+    setSelectedMissingSkills(prev => 
+      prev.includes(skill) ? prev.filter(s => s !== skill) : [...prev, skill]
+    );
+  };
+
+  const addMissingSkills = async () => {
+    if (!skillGap || selectedMissingSkills.length === 0) return;
+    const newResumeText = `${resumeText}\n\nSkills: ${selectedMissingSkills.join(', ')}`;
     setResumeText(newResumeText);
+    await runOptimization();
   };
 
   const runInterviewQuestions = async () => {
@@ -165,12 +199,12 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     setIsLoading(false);
   };
 
-  const saveVersion = () => {
+  const saveVersion = (customName?: string) => {
     const timestamp = new Date().toISOString();
     const newVersion = { 
       id: Date.now(), 
       timestamp,
-      name: saveName || `Version ${new Date(timestamp).toLocaleString()}`,
+      name: typeof customName === 'string' ? customName : (saveName || `Version ${new Date(timestamp).toLocaleString()}`),
       data: { 
         resumeText, 
         jobDescription,
@@ -180,7 +214,68 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     const newHistory = [newVersion, ...history].slice(0, 10);
     setHistory(newHistory);
     localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
-    setSaveName('');
+    if (typeof customName !== 'string') {
+      setSaveName('');
+    }
+  };
+
+  const downloadCoverLetterPDF = async () => {
+    if (!coverLetter) return;
+    setIsLoading(true);
+    try {
+      // Save version automatically
+      const timestamp = new Date().toISOString();
+      let generatedName = '';
+      if (companyName && targetRole) {
+        generatedName = `${companyName} - ${targetRole} - Cover Letter - ${new Date(timestamp).toLocaleString()}`;
+      } else if (companyName) {
+        generatedName = `${companyName} - Cover Letter - ${new Date(timestamp).toLocaleString()}`;
+      } else if (targetRole) {
+        generatedName = `${targetRole} - Cover Letter - ${new Date(timestamp).toLocaleString()}`;
+      } else {
+        generatedName = `Cover Letter - ${new Date(timestamp).toLocaleString()}`;
+      }
+      saveVersion(generatedName);
+
+      // Generate PDF
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.5; padding: 40px; white-space: pre-wrap; }
+          </style>
+        </head>
+        <body>${coverLetter}</body>
+        </html>
+      `;
+
+      const sessionResponse = await fetch('/api/pdf-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html, css: '', fonts: [] })
+      });
+
+      if (!sessionResponse.ok) {
+        throw new Error('Failed to create PDF session');
+      }
+
+      const { sessionId } = await sessionResponse.json();
+      
+      // Trigger download
+      const downloadUrl = `/api/download-pdf/${sessionId}`;
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `Cover_Letter_${Date.now()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to download PDF.");
+    }
+    setIsLoading(false);
   };
 
   const renameVersion = (id: number) => {
@@ -266,6 +361,18 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       
       {activeTab === 'skillGap' && (
         <div className="space-y-4">
+          {activeAudience && currentResults && currentResults[activeAudience] && (
+            <div className="flex gap-4 mb-4">
+              <div className="flex-1 p-3 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-center">
+                <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1">Old Score</div>
+                <div className="text-2xl font-black text-gray-400">{currentResults[activeAudience].baseline_score || 0}%</div>
+              </div>
+              <div className="flex-1 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-center">
+                <div className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">New Score</div>
+                <div className="text-2xl font-black text-emerald-500">{currentResults[activeAudience].match_score || 0}%</div>
+              </div>
+            </div>
+          )}
           <button 
             onClick={runSkillGap} 
             disabled={isLoading} 
@@ -291,9 +398,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                   <AlertCircle className="w-3 h-3" />
                   Missing Skills
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-2">
                   {skillGap.missing.map((s, i) => (
-                    <span key={i} className="px-2 py-0.5 rounded bg-red-500/10 text-red-500 text-[9px]">{s}</span>
+                    <label key={i} className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/10 text-red-500 text-[9px] cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedMissingSkills.includes(s)}
+                        onChange={() => toggleSkill(s)}
+                        className="accent-red-500"
+                      />
+                      {s}
+                    </label>
                   ))}
                 </div>
                 <button 
@@ -354,6 +469,13 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                   <Copy className="w-3 h-3" />
                   Copy Text
                 </button>
+                <button 
+                  onClick={downloadCoverLetterPDF}
+                  className="flex-1 flex items-center justify-center gap-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-500 py-2 rounded-lg text-[10px] font-bold transition-all"
+                >
+                  <Download className="w-3 h-3" />
+                  Download PDF
+                </button>
               </div>
             </div>
           )}
@@ -402,7 +524,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
               }`}
             />
             <button 
-              onClick={saveVersion} 
+              onClick={() => saveVersion()} 
               className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-3 rounded-xl text-[10px] transition-colors whitespace-nowrap"
             >
               Save Version

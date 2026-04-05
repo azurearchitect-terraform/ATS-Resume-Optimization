@@ -240,6 +240,9 @@ async function startServer() {
     }
 
     console.log(`Generating PDF. HTML length: ${html.length}`);
+    console.log(`CSS length: ${css?.length || 0}`);
+    console.log(`Fonts length: ${fonts?.length || 0}`);
+    console.log(`CSS snippet: ${css?.substring(0, 500) || ''}`);
 
     let browser;
     try {

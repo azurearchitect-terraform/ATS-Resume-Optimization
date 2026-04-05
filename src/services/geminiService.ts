@@ -138,8 +138,22 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
         }
       };
     } catch (error: any) {
-      console.error("Gemini Frontend Error:", error);
-      throw error;
+      let errorMessage = error?.message || String(error);
+      
+      // Try to parse Gemini error if it's a JSON string
+      try {
+        if (errorMessage.startsWith('{')) {
+          const parsed = JSON.parse(errorMessage);
+          if (parsed.error?.message) {
+            errorMessage = parsed.error.message;
+          }
+        }
+      } catch (e) {
+        // Not a JSON string, ignore
+      }
+
+      console.error("Gemini Frontend Error:", errorMessage);
+      throw new Error(errorMessage);
     }
   } else {
     // OpenAI and other engines can stay on the backend
@@ -232,7 +246,12 @@ The output must be layout-aware and ready for A4 PDF rendering.
 The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
 You must generate structured, layout-safe content that fits within these constraints.
 * ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
-* TARGET: Achieve at least an 80% optimization score by maximizing keyword alignment and impact metrics.
+* Calculate a REALISTIC and STRICT match score based on actual keyword overlap and experience match. Do not artificially inflate the score.
+* DE-EMPHASIZE TERRAFORM & DEVOPS: The candidate has foundational knowledge in these areas. Do NOT over-focus on them or make them the primary highlight of the resume. Focus more on other core technical strengths and leadership.
+* CACHING MECHANISM (PRESERVATION):
+  - HEADER: Preserve the personal information exactly as provided.
+  - EDUCATION: Do NOT re-optimize or change the education section if it is already well-formatted.
+  - CERTIFICATIONS: Preserve existing certifications; only add new ones if they are highly relevant to the JD and missing.
 * Ensure every bullet point starts with a strong action verb and includes a measurable result if possible.
 
 CRITICAL ISSUES TO RESOLVE:
@@ -304,6 +323,15 @@ Return the result in the following JSON format: { "personal_info": { "name": str
 
       try {
         const parsed = JSON.parse(resultText);
+        
+        // Ensure scores are present and numeric
+        if (typeof parsed.match_score !== 'number') {
+          parsed.match_score = parseInt(parsed.match_score) || 70;
+        }
+        if (typeof parsed.baseline_score !== 'number') {
+          parsed.baseline_score = parseInt(parsed.baseline_score) || 50;
+        }
+
         if (data.usage) {
           parsed._usage = data.usage;
         }
@@ -331,7 +359,11 @@ Return the result in the following JSON format: { "personal_info": { "name": str
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
-        console.warn(`Error hit on ${routedConfig.engine} (${isRateLimit ? 'Rate Limit' : 'JSON Error'}). Retrying in ${Math.round(delay)}ms... (Attempt ${retryCount}/${maxRetries})`);
+        const retryMsg = isRateLimit 
+          ? `Gemini API quota exceeded. Retrying with exponential backoff (${retryCount}/${maxRetries})...`
+          : `Invalid AI response format. Retrying (${retryCount}/${maxRetries})...`;
+          
+        console.warn(`${retryMsg} (Delay: ${Math.round(delay)}ms)`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -399,8 +431,13 @@ export async function analyzeBestAudiences(
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
-  } catch (error) {
-    console.error("Error analyzing best audiences:", error);
+  } catch (error: any) {
+    const errorMsg = error?.message || String(error);
+    if (errorMsg.includes("429") || errorMsg.includes("quota")) {
+      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using default audience.");
+    } else {
+      console.error("Error analyzing best audiences:", errorMsg);
+    }
     return ['microsoft'];
   }
 }
@@ -449,7 +486,23 @@ export async function generateRecruiterMessage(
 
   try {
     const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
-    return data.result || "";
+    let result = data.result || "";
+    
+    // Try to parse if it looks like JSON
+    if (result.includes('{') && result.includes('}')) {
+       try {
+         const jsonStr = extractJson(result);
+         const parsed = JSON.parse(jsonStr);
+         if (parsed.message) {
+           result = parsed.message;
+         } else if (parsed.recruiter_message) {
+           result = parsed.recruiter_message;
+         }
+       } catch (e) {
+         // Ignore and use raw result
+       }
+    }
+    return result.trim();
   } catch (error) {
     console.error("Error generating recruiter message:", error);
     return "";
@@ -478,7 +531,23 @@ export async function generateCoverLetter(
 
   try {
     const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
-    return data.result || "";
+    let result = data.result || "";
+    
+    // Try to parse if it looks like JSON
+    if (result.includes('{') && result.includes('}')) {
+       try {
+         const jsonStr = extractJson(result);
+         const parsed = JSON.parse(jsonStr);
+         if (parsed.cover_letter) {
+           result = parsed.cover_letter;
+         } else if (parsed.coverLetter) {
+           result = parsed.coverLetter;
+         }
+       } catch (e) {
+         // Ignore and use raw result
+       }
+    }
+    return result.trim();
   } catch (error) {
     console.error("Error generating cover letter:", error);
     return "";
