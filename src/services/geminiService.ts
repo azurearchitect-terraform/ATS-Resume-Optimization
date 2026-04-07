@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
+import { SuitabilityResult } from "../types";
 
 export interface OptimizationResult {
   personal_info: {
@@ -87,29 +88,17 @@ function extractJson(text: string): string {
 }
 
 async function callAI(prompt: string, model: string, engine: EngineType, encryptedKey?: string) {
-  if (!encryptedKey) {
-    throw new Error("API Key is missing. Please save your profile first.");
+  if (engine === 'openai' && !encryptedKey) {
+    throw new Error("OpenAI API Key is missing. Please save your profile first.");
   }
 
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
     try {
-      // First, get the decrypted key from the backend
-      const decryptResponse = await fetch('/api/decrypt-keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ encryptedKey })
-      });
-      
-      if (!decryptResponse.ok) {
-        throw new Error("Failed to decrypt API key for frontend use");
-      }
-      
-      const { keys } = await decryptResponse.json();
-      const apiKey = keys.gemini;
+      const apiKey = process.env.GEMINI_API_KEY;
       
       if (!apiKey) {
-        throw new Error("Gemini API key is missing. Please save your profile first.");
+        throw new Error("Gemini API key is missing from the environment.");
       }
 
       const ai = new GoogleGenAI({ apiKey });
@@ -199,6 +188,46 @@ JOB URL: ${url}
   }
 }
 
+export async function evaluateSuitability(
+  resumeText: string,
+  jobDescription: string,
+  config: RouterConfig
+): Promise<SuitabilityResult> {
+  const routedConfig = routeTask('evaluate_suitability', config);
+  const modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
+
+  const prompt = `
+You are an expert technical recruiter screening a candidate's resume against a job description.
+Your goal is to quickly evaluate if the candidate is a good fit, a stretch, or not recommended.
+Look for hard dealbreakers (years of experience, mandatory skills, clearance, role level).
+
+RESUME:
+${resumeText}
+
+JOB DESCRIPTION:
+${jobDescription}
+
+Return ONLY a JSON object with the following structure:
+{
+  "verdict": "Strong Match" | "Stretch Role" | "Not Recommended",
+  "matchScore": number (0-100),
+  "dealbreakers": string[] (list of major missing requirements, empty if none),
+  "strengths": string[] (list of key matching qualifications),
+  "reasoning": string (1-2 sentences explaining the verdict)
+}
+`;
+
+  try {
+    const data = await callAI(prompt, modelToUse, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    if (!resultText) throw new Error("No response from AI");
+    return JSON.parse(resultText);
+  } catch (error) {
+    console.error("Error evaluating suitability:", error);
+    throw error;
+  }
+}
+
 export async function optimizeResume(
   resumeText: string,
   jobDescription: string,
@@ -214,6 +243,9 @@ export async function optimizeResume(
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
   const modelToUse = fastMode ? (routedConfig.engine === 'openai' ? 'gpt-5.4-mini' : 'gemini-3-flash-preview') : routedConfig.model;
+  const isLeadershipRole = /director|manager|lead|head|executive|vp|chief|principal|senior manager/i.test(targetRole);
+  const isTechnicalRole = /engineer|developer|architect|specialist|analyst|technician/i.test(targetRole);
+
   const prompt = `
 ROLE:
 You are a senior executive resume strategist.
@@ -228,7 +260,7 @@ STRICT RULES:
 * Ensure no text is cut from left or right margins
 
 TASK:
-1. Rewrite the summary (minimum 4–5 strong lines)
+1. Rewrite the summary (medium length, 3-4 strong lines)
 2. Optimize experience with impactful bullet points
 3. Balance content across 2 pages
 4. Ensure proper section distribution
@@ -246,12 +278,13 @@ The output must be layout-aware and ready for A4 PDF rendering.
 The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
 You must generate structured, layout-safe content that fits within these constraints.
 * ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
-* Calculate a REALISTIC and STRICT match score based on actual keyword overlap and experience match. Do not artificially inflate the score.
-* DE-EMPHASIZE TERRAFORM & DEVOPS: The candidate has foundational knowledge in these areas. Do NOT over-focus on them or make them the primary highlight of the resume. Focus more on other core technical strengths and leadership.
+* Calculate a REALISTIC and STRICT match score. Aim for a target score between 80-85% by strategically aligning the candidate's strengths with the JD requirements without exaggeration.
+${isLeadershipRole ? `* FOCUS ON LEADERSHIP & STRATEGY: Since this is a ${targetRole} role, emphasize strategic vision, team management, stakeholder engagement, budget oversight, and business impact. De-emphasize hands-on technical tasks in favor of high-level outcomes.` : ''}
+${isTechnicalRole && !isLeadershipRole ? `* FOCUS ON TECHNICAL DEPTH: Highlight specific tools, architectures, and technical problem-solving. Ensure the resume demonstrates deep expertise in the required tech stack.` : ''}
 * CACHING MECHANISM (PRESERVATION):
   - HEADER: Preserve the personal information exactly as provided.
   - EDUCATION: Do NOT re-optimize or change the education section if it is already well-formatted.
-  - CERTIFICATIONS: Preserve existing certifications; only add new ones if they are highly relevant to the JD and missing.
+  - CERTIFICATIONS: STRICTLY preserve existing certifications from the input resume. DO NOT invent, hallucinate, or add any new certifications under any circumstances. If the user has 3 certifications, output exactly those 3.
 * Ensure every bullet point starts with a strong action verb and includes a measurable result if possible.
 
 CRITICAL ISSUES TO RESOLVE:
@@ -271,15 +304,16 @@ CRITICAL ISSUES TO RESOLVE:
 
 4. VISUAL STRUCTURE FOR UI:
 * Do NOT include lines, separators, or styling text.
-* Skills must be grouped logically for grid display: Infrastructure, DevSecOps, Governance, Observability.
+* Skills must be grouped logically for grid display into 4 categories.
+${isLeadershipRole ? `* Suggested skill categories for this role: Strategic Leadership, Management, Operations, Technical Proficiency.` : `* Suggested skill categories for this role: Core Technical, Tools & Frameworks, Process & Methodology, Soft Skills.`}
 * Keep skills short (1–3 words).
 
 LAYOUT-SAFE CONTENT RULES (MANDATORY):
-- SUMMARY: Comprehensive 6-8 line summary, leadership-focused, highlighting key strategic impact and technical vision.
+- SUMMARY: Impactful 3-4 line summary, highlighting key strategic impact and relevant expertise.
 - SKILLS: Max 15–20 items total across categories.
-- EXPERIENCE: Include ALL roles from the input. For the 3 most recent roles, provide at most 7 high-impact bullets. For all other roles, provide at most 3-4 bullets. Each bullet max 15 words. Focus on impact and technical depth. Use quantifiable metrics (e.g., %) only when appropriate and realistic, avoiding an unnatural overload of numbers.
-- CERTIFICATIONS: Max 5 items.
-- PROJECTS: Max 3 high-impact technical projects. Use the projects from the Master Resume as the source. You MUST include this section if projects are present in the input.
+- EXPERIENCE: Include ALL roles from the input. For the 3 most recent roles, provide at most 7 high-impact bullets. For all other roles, provide at most 3-4 bullets. Each bullet max 15 words. Focus on impact and relevant depth. Use quantifiable metrics (e.g., %) only when appropriate and realistic, avoiding an unnatural overload of numbers.
+- CERTIFICATIONS: ONLY include certifications present in the input resume. Do NOT add any new ones.
+- PROJECTS: Max 3 high-impact projects. Use the projects from the Master Resume as the source. You MUST include this section if projects are present in the input.
 - EDUCATION: Properly reframed. You MUST include this section.
 
 INPUT:
@@ -331,6 +365,28 @@ Return the result in the following JSON format: { "personal_info": { "name": str
         if (typeof parsed.baseline_score !== 'number') {
           parsed.baseline_score = parseInt(parsed.baseline_score) || 50;
         }
+
+        // Skills must be grouped into 4 categories. We'll use the keys from the AI response.
+        const skillCategories = Object.keys(parsed.skills || {});
+        const formattedSkills: Record<string, string[]> = {};
+        
+        // Ensure we have exactly 4 categories for the UI grid
+        skillCategories.slice(0, 4).forEach(cat => {
+          formattedSkills[cat] = parsed.skills[cat];
+        });
+
+        // Fill in missing categories if less than 4
+        const defaultCats = isLeadershipRole 
+          ? ["Strategic Leadership", "Management", "Operations", "Technical Proficiency"]
+          : ["Core Technical", "Tools & Frameworks", "Process & Methodology", "Soft Skills"];
+          
+        while (Object.keys(formattedSkills).length < 4) {
+          const nextCat = defaultCats.find(c => !formattedSkills[c]);
+          if (nextCat) formattedSkills[nextCat] = [];
+          else formattedSkills[`Category ${Object.keys(formattedSkills).length + 1}`] = [];
+        }
+
+        parsed.skills = formattedSkills;
 
         if (data.usage) {
           parsed._usage = data.usage;
@@ -410,17 +466,24 @@ export async function analyzeBestAudiences(
   const prompt = `
     Analyze the following Job Description and Target Role.
     Select the most appropriate audiences from the following list:
-    - cloud-architect
-    - cloud-ops
-    - leadership
-    - solution-architect
-    - infra-engineer
     - microsoft
-    - startup
-    - technical
+    - leadership
+    - cloud-architect
+    - solution-architect
     - consulting
+    - cloud-eng-mgr
+    - infra-mgr
+    - assoc-director
+    - director-mid
+    - director-large
+    - principal-architect
+    - cto-vp
+    - digital-transform
+    - platform-dir
     
-    Return ONLY a JSON array of the IDs of the best matching audiences. Example: ["cloud-architect", "leadership"]
+    If NONE of the above audiences are a perfect fit for the Target Role and JD, you MUST suggest a custom audience name that best describes the target persona (e.g., "Product Management", "Data Science", "Frontend Engineering").
+    
+    Return ONLY a JSON array of the IDs or custom names. Example: ["cloud-architect", "leadership"] or ["Product Management"]
     
     JOB DESCRIPTION: ${jobDescription}
     TARGET ROLE: ${targetRole}
@@ -430,15 +493,15 @@ export async function analyzeBestAudiences(
     const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
-    return Array.isArray(parsed) ? parsed : (parsed.audiences || ['microsoft']);
+    return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
     if (errorMsg.includes("429") || errorMsg.includes("quota")) {
-      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using default audience.");
+      console.warn("Auto-audience selection skipped: Gemini API quota exceeded. Using Target Role as default.");
     } else {
       console.error("Error analyzing best audiences:", errorMsg);
     }
-    return ['microsoft'];
+    return [targetRole];
   }
 }
 

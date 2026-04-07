@@ -75,3 +75,11 @@ export interface ResumeTemplate {
     dividerStyle: 'line' | 'none';
   };
 }
+
+export interface SuitabilityResult {
+  verdict: "Strong Match" | "Stretch Role" | "Not Recommended";
+  matchScore: number;
+  dealbreakers: string[];
+  strengths: string[];
+  reasoning: string;
+}

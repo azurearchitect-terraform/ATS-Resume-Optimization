@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 dotenv.config();
 
 // PDF Sessions storage
-const pdfSessions = new Map<string, { html: string, css: string, fonts: string, timestamp: number }>();
+const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, timestamp: number }>();
 
 // Cleanup old sessions every 30 minutes
 setInterval(() => {
@@ -213,12 +213,12 @@ async function startServer() {
 
   // API Endpoint to create a PDF session
   app.post("/api/pdf-session", (req, res) => {
-    const { html, css, fonts } = req.body;
+    const { html, css, fonts, title } = req.body;
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
     const sessionId = uuidv4();
-    pdfSessions.set(sessionId, { html, css, fonts, timestamp: Date.now() });
+    pdfSessions.set(sessionId, { html, css, fonts, title, timestamp: Date.now() });
     res.json({ sessionId });
   });
 
@@ -231,10 +231,10 @@ async function startServer() {
     }
     // Optional: delete session after retrieval to save memory
     // pdfSessions.delete(sessionId);
-    await handlePdfGeneration(session.html, session.css, session.fonts, res);
+    await handlePdfGeneration(session.html, session.css, session.fonts, res, session.title);
   });
 
-  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any) {
+  async function handlePdfGeneration(html: string, css: string, fonts: string, res: any, title: string = "Resume") {
     if (!html) {
       return res.status(400).json({ error: "HTML content is required" });
     }
@@ -273,6 +273,7 @@ async function startServer() {
         <html>
           <head>
             <meta charset="UTF-8">
+            <title>${title}</title>
             <style>
               /* Reset and Base Styles */
               * { box-sizing: border-box; }
@@ -332,7 +333,8 @@ async function startServer() {
 
       // Set headers and send
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", 'attachment; filename="resume.pdf"');
+      const safeTitle = title.replace(/[^a-zA-Z0-9_-]/g, '_');
+      res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.pdf"`);
       res.setHeader("Content-Length", pdfBuffer.length);
       res.end(pdfBuffer);
 

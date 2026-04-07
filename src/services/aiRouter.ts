@@ -10,7 +10,8 @@ export type TaskType =
   | 'recruiter_simulation'
   | 'interview_questions'
   | 'cover_letter'
-  | 'recruiter_message';
+  | 'recruiter_message'
+  | 'evaluate_suitability';
 
 export interface RouterConfig {
   mode: EngineType | 'production';
@@ -33,6 +34,7 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
     case 'extract_job_description':
     case 'extract_skills':
     case 'ats_scoring':
+    case 'evaluate_suitability':
       selectedEngine = 'gemini';
       break;
 

@@ -228,7 +228,7 @@
     flex-direction: column;
     box-sizing: border-box;
     position: relative;
-    color: #1A1A1A;
+    color: #000000;
   }
 
   @media print {

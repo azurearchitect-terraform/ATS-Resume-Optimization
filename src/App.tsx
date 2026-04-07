@@ -40,13 +40,15 @@ import { SortableSection } from './components/SortableSection';
 import { AdditionalTools } from './components/AdditionalTools';
 import { StatusIndicator } from './components/StatusIndicator';
 import { useResumeStore } from './store';
-import { ResumeData } from './types';
+import { ResumeData, SuitabilityResult } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
-import { optimizeResume, fetchJobDescription, analyzeBestAudiences, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
+import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
 import { RouterConfig } from './services/aiRouter';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
+import { saveAs } from 'file-saver';
 
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
@@ -101,15 +103,21 @@ const MODE_DESCRIPTIONS = {
 };
 
 const AUDIENCES = [
-  { id: 'cloud-architect', label: 'Cloud Architect', icon: '☁️' },
-  { id: 'cloud-ops', label: 'Cloud Ops Engineer', icon: '⚙️' },
-  { id: 'leadership', label: 'Leadership / Manager', icon: '👔' },
-  { id: 'solution-architect', label: 'Solution Architect', icon: '🏗️' },
-  { id: 'infra-engineer', label: 'Infra Engineer', icon: '🛠️' },
+  { id: 'general', label: 'General Professional', icon: '👤' },
   { id: 'microsoft', label: 'Microsoft / Enterprise', icon: '🏢' },
-  { id: 'startup', label: 'Startup / Agile', icon: '🚀' },
-  { id: 'technical', label: 'Deep Technical / Engineering', icon: '💻' },
-  { id: 'consulting', label: 'Consulting / Client-Facing', icon: '🤝' }
+  { id: 'leadership', label: 'Leadership / Manager', icon: '👔' },
+  { id: 'cloud-architect', label: 'Cloud Architect', icon: '☁️' },
+  { id: 'solution-architect', label: 'Solution Architect', icon: '🏗️' },
+  { id: 'consulting', label: 'Consulting / Client-Facing', icon: '🤝' },
+  { id: 'cloud-eng-mgr', label: 'Cloud Engineering Manager', icon: '⚙️' },
+  { id: 'infra-mgr', label: 'Infrastructure Manager', icon: '🛠️' },
+  { id: 'assoc-director', label: 'Associate Director / Lead roles', icon: '🎖️' },
+  { id: 'director-mid', label: 'Director / Head of Cloud (mid-size)', icon: '📈' },
+  { id: 'director-large', label: 'Director / Head of Cloud (large-size)', icon: '🌐' },
+  { id: 'principal-architect', label: 'Principal Cloud Architect', icon: '💎' },
+  { id: 'cto-vp', label: 'CTO / VP of Engineering', icon: '👑' },
+  { id: 'digital-transform', label: 'Digital Transformation Lead', icon: '⚡' },
+  { id: 'platform-dir', label: 'Platform Engineering Director', icon: '🏗️' }
 ];
 
 const MODEL_PRICING: Record<string, { input: number, output: number }> = {
@@ -132,7 +140,6 @@ const MODEL_PRICING: Record<string, { input: number, output: number }> = {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [apiKey, setApiKey] = useState('');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
@@ -168,7 +175,6 @@ export default function App() {
             }
             if (data.encryptedApiKey) {
               setEncryptedApiKey(data.encryptedApiKey);
-              setApiKey('••••••••••••••••'); // Placeholder
               setOpenaiApiKey('••••••••••••••••'); // Placeholder
               setIsApiKeySaved(true);
             }
@@ -177,7 +183,6 @@ export default function App() {
           console.error("Error fetching profile:", err);
         }
       } else {
-        setApiKey('');
         setOpenaiApiKey('');
         setEncryptedApiKey('');
         setIsApiKeySaved(false);
@@ -220,9 +225,9 @@ export default function App() {
       let finalEncryptedKey = encryptedApiKey;
 
       // If the user entered a new API key (not the placeholder)
-      if ((apiKey && apiKey !== '••••••••••••••••') || (openaiApiKey && openaiApiKey !== '••••••••••••••••')) {
+      if (openaiApiKey && openaiApiKey !== '••••••••••••••••') {
         const keysToEncrypt = JSON.stringify({
-          gemini: apiKey !== '••••••••••••••••' ? apiKey : '',
+          gemini: '', // Gemini key is now handled via environment variables
           openai: openaiApiKey !== '••••••••••••••••' ? openaiApiKey : ''
         });
 
@@ -238,7 +243,6 @@ export default function App() {
         const data = await response.json();
         finalEncryptedKey = data.encryptedKey;
         setEncryptedApiKey(finalEncryptedKey);
-        if (apiKey) setApiKey('••••••••••••••••');
         if (openaiApiKey) setOpenaiApiKey('••••••••••••••••');
         setIsApiKeySaved(true);
       }
@@ -271,7 +275,6 @@ export default function App() {
             encryptedApiKey: "",
             updatedAt: serverTimestamp()
           }, { merge: true });
-          setApiKey('');
           setOpenaiApiKey('');
           setEncryptedApiKey('');
           setIsApiKeySaved(false);
@@ -342,6 +345,8 @@ export default function App() {
   const [jobUrl, setJobUrl] = useState('');
   const [isExtractingLinkedIn, setIsExtractingLinkedIn] = useState(false);
   const [isFetchingJob, setIsFetchingJob] = useState(false);
+  const [suitabilityResult, setSuitabilityResult] = useState<SuitabilityResult | null>(null);
+  const [isCheckingSuitability, setIsCheckingSuitability] = useState(false);
 
   // Profile Overrides
   const [profileName, setProfileName] = useState(() => localStorage.getItem('profileName') || '');
@@ -485,6 +490,8 @@ export default function App() {
         targetRole,
         companyName,
         results,
+        activeAudience,
+        selectedAudiences,
         formatting: formattingState
       }
     };
@@ -749,6 +756,17 @@ export default function App() {
     if (version.data.resumeText) setResumeText(version.data.resumeText);
     if (version.data.jobDescription) setJobDescription(version.data.jobDescription);
     if (version.data.results) setResults(version.data.results);
+    if (version.data.activeAudience) setActiveAudience(version.data.activeAudience);
+    else if (version.data.results && Object.keys(version.data.results).length > 0) {
+      setActiveAudience(Object.keys(version.data.results)[0]);
+    }
+    if (version.data.selectedAudiences) setSelectedAudiences(version.data.selectedAudiences);
+    if (version.data.targetRole) setTargetRole(version.data.targetRole);
+    if (version.data.companyName) setCompanyName(version.data.companyName);
+    if (version.data.formatting) {
+      formattingDispatch({ type: 'SET_ALL_STYLES', styles: version.data.formatting.styles || {} });
+    }
+    
     setActiveTab('config');
   };
 
@@ -802,6 +820,32 @@ export default function App() {
       setError(`Failed to fetch job description: ${err.message || 'Unknown error'}. You can still paste it manually.`);
     } finally {
       setIsFetchingJob(false);
+    }
+  };
+
+  const handleCheckSuitability = async () => {
+    if (!resumeText || (!jobDescription && !jobUrl)) {
+      setError('Please provide both a resume and a job description (or URL).');
+      return;
+    }
+
+    setIsCheckingSuitability(true);
+    setSuitabilityResult(null);
+    setError(null);
+
+    try {
+      let finalJobDescription = jobDescription;
+      if (!finalJobDescription && jobUrl) {
+        finalJobDescription = await fetchJobDescription(jobUrl, getRouterConfig());
+      }
+
+      const result = await evaluateSuitability(resumeText, finalJobDescription, getRouterConfig());
+      setSuitabilityResult(result);
+    } catch (err: any) {
+      console.error("Suitability check failed:", err);
+      setError(err.message || 'Failed to check suitability. Please try again.');
+    } finally {
+      setIsCheckingSuitability(false);
     }
   };
 
@@ -1059,6 +1103,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     };
   }, [isResizingWidth]);
 
+  const [previewMode, setPreviewMode] = useState<'standard' | 'simplified'>('standard');
   const [isDownloading, setIsDownloading] = useState(false);
 
   const downloadPDF = async () => {
@@ -1108,6 +1153,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         })
         .join('\n');
 
+      const parts = [];
+      if (targetRole) parts.push(targetRole.replace(/\s+/g, '_'));
+      if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
+      if (parts.length === 0) parts.push('Resume');
+      const pdfTitle = `${parts.join('_')}_Harnish_Jariwala`;
+
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
         headers: {
@@ -1116,6 +1167,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         body: JSON.stringify({
           html: element.outerHTML,
           css: allStyles,
+          title: pdfTitle,
           fonts: customFonts.map(font => `
             @font-face {
               font-family: '${font.name}';
@@ -1150,12 +1202,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       const link = document.createElement('a');
       link.href = url;
       
-      const parts = [];
-      if (targetRole) parts.push(targetRole.replace(/\s+/g, '_'));
-      if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
-      if (parts.length === 0) parts.push('Resume');
-      
-      link.download = `${parts.join('_')}_Harnish_Jariwala.pdf`;
+      link.download = `${pdfTitle}.pdf`;
       
       document.body.appendChild(link);
       link.click();
@@ -1174,6 +1221,172 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     }
   };
 
+  const downloadDOCX = async () => {
+    const res = results[activeAudience!] || data;
+    if (!res) return;
+
+    try {
+      const doc = new Document({
+        sections: [
+          {
+            properties: {},
+            children: [
+              // Header - 2 Lines
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: res.personal_info?.name || '',
+                    bold: true,
+                    size: 28, // 14pt
+                  }),
+                ],
+                alignment: AlignmentType.CENTER,
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `${res.personal_info?.location || ''} | ${res.personal_info?.email || ''} | ${res.personal_info?.phone || ''} | ${res.personal_info?.linkedin || ''}`,
+                    size: 18, // 9pt
+                  }),
+                ],
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 200 },
+              }),
+
+              // Summary
+              new Paragraph({
+                text: "PROFESSIONAL SUMMARY",
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 200, after: 100 },
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: (res as any).summary || (res as any).personal_info?.summary || "",
+                    size: 20, // 10pt
+                  }),
+                ],
+                spacing: { after: 200 },
+              }),
+
+              // Skills
+              new Paragraph({
+                text: "TECHNICAL SKILLS",
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 200, after: 100 },
+              }),
+              new Paragraph({
+                text: Array.isArray(res.skills) 
+                  ? res.skills.join(", ") 
+                  : Object.entries(res.skills).map(([cat, skills]) => `${cat}: ${(skills as string[]).join(", ")}`).join(" | "),
+                spacing: { after: 200 },
+              }),
+
+              // Experience
+              new Paragraph({
+                text: "PROFESSIONAL EXPERIENCE",
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 200, after: 100 },
+              }),
+              ...res.experience.flatMap((exp: any) => [
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: exp.role, bold: true }),
+                    new TextRun({ text: `\t${exp.duration}`, bold: true }),
+                  ],
+                  tabStops: [
+                    {
+                      type: AlignmentType.RIGHT,
+                      position: 9000,
+                    },
+                  ],
+                }),
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: exp.company, italics: true, color: "444444" }),
+                  ],
+                  spacing: { after: 100 },
+                }),
+                ...exp.bullets.map((bullet: string) => 
+                  new Paragraph({
+                    text: bullet,
+                    bullet: { level: 0 },
+                  })
+                ),
+                new Paragraph({ text: "", spacing: { after: 200 } }),
+              ]),
+
+              // Projects
+              ...(res.projects && res.projects.length > 0 ? [
+                new Paragraph({
+                  text: "STRATEGIC PROJECTS",
+                  heading: HeadingLevel.HEADING_1,
+                  spacing: { before: 200, after: 100 },
+                }),
+                ...res.projects.flatMap((proj: any) => [
+                  new Paragraph({
+                    children: [
+                      new TextRun({ text: typeof proj === 'string' ? proj : proj.title, bold: true }),
+                    ],
+                  }),
+                  ...(typeof proj !== 'string' && proj.description ? [
+                    new Paragraph({
+                      text: proj.description,
+                      bullet: { level: 0 },
+                      spacing: { after: 100 },
+                    })
+                  ] : [
+                    new Paragraph({ text: "", spacing: { after: 100 } })
+                  ]),
+                ]),
+              ] : []),
+
+              // Certifications
+              ...(res.certifications && res.certifications.length > 0 ? [
+                new Paragraph({
+                  text: "CERTIFICATIONS",
+                  heading: HeadingLevel.HEADING_1,
+                  spacing: { before: 200, after: 100 },
+                }),
+                ...res.certifications.map((cert: string) => 
+                  new Paragraph({
+                    text: cert,
+                    bullet: { level: 0 },
+                  })
+                ),
+              ] : []),
+
+              // Education
+              new Paragraph({
+                text: "EDUCATION",
+                heading: HeadingLevel.HEADING_1,
+                spacing: { before: 200, after: 100 },
+              }),
+              ...res.education.map((edu: any) => 
+                new Paragraph({
+                  text: typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`,
+                  bullet: { level: 0 },
+                })
+              ),
+            ],
+          },
+        ],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const parts = [];
+      if (targetRole) parts.push(targetRole.replace(/\s+/g, '_'));
+      if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
+      if (parts.length === 0) parts.push('Resume');
+      
+      saveAs(blob, `${parts.join('_')}_Harnish_Jariwala.docx`);
+      showToast('DOCX Downloaded successfully!', 'success');
+    } catch (err: any) {
+      console.error('DOCX Generation Error:', err);
+      showToast('Failed to generate DOCX. Please try again.', 'error');
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
   };
@@ -1187,18 +1400,111 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     setFileName(null);
   };
 
+  const renderSimplifiedResume = () => {
+    const res = results[activeAudience!] || data;
+    if (!res) return null;
+
+    return (
+      <div className="bg-white text-black font-serif leading-tight max-w-[210mm] min-w-[210mm] min-h-[297mm] mx-auto shadow-sm" style={{ padding: '12mm' }}>
+        {/* Header - 2 Lines */}
+        <div className="text-center mb-4 border-b pb-2">
+          <h1 className="text-xl font-bold uppercase mb-0.5 tracking-tight">{res.personal_info?.name || ''}</h1>
+          <p className="text-[10px] opacity-80 tracking-wide">
+            {res.personal_info?.location || ''} | {res.personal_info?.email || ''} | {res.personal_info?.phone || ''} | {res.personal_info?.linkedin || ''}
+          </p>
+        </div>
+
+        {/* Summary */}
+        <div className="mb-4">
+          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-widest">Professional Summary</h2>
+          <p className="text-[11px] text-justify leading-relaxed">{(res as any).summary || (res as any).personal_info?.summary || ""}</p>
+        </div>
+
+        {/* Skills */}
+        <div className="mb-4">
+          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Technical Skills</h2>
+          <p className="text-[11px] leading-relaxed">
+            {Array.isArray(res.skills) 
+              ? res.skills.join(", ") 
+              : Object.entries(res.skills).map(([cat, skills]) => `${cat}: ${(skills as string[]).join(", ")}`).join(" | ")}
+          </p>
+        </div>
+
+        {/* Experience */}
+        <div className="mb-4">
+          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Professional Experience</h2>
+          {res.experience.map((exp: any, i: number) => (
+            <div key={i} className="mb-3">
+              <div className="flex justify-between font-bold text-[11px]">
+                <span>{exp.role}</span>
+                <span className="font-normal italic">{exp.duration}</span>
+              </div>
+              <div className="italic mb-0.5 text-[10.5px] opacity-90">{exp.company}</div>
+              <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+                {exp.bullets.map((bullet: string, bi: number) => (
+                  <li key={bi} className="leading-snug">{bullet}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Projects */}
+        {res.projects && res.projects.length > 0 && (
+          <div className="mb-4">
+            <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Strategic Projects</h2>
+            {res.projects.map((proj: any, i: number) => (
+              <div key={i} className="mb-2">
+                <div className="font-bold text-[11px]">{typeof proj === 'string' ? proj : proj.title}</div>
+                {typeof proj !== 'string' && proj.description && (
+                  <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+                    <li className="leading-snug">{proj.description}</li>
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Certifications */}
+        {res.certifications && res.certifications.length > 0 && (
+          <div className="mb-4">
+            <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Certifications</h2>
+            <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+              {res.certifications.map((cert: string, i: number) => (
+                <li key={i}>{cert}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Education */}
+        <div className="mb-4">
+          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Education</h2>
+          <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+            {res.education.map((edu: any, i: number) => (
+              <li key={i}>
+                {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  };
+
   const renderSection = (sectionId: string, customExp?: any[], isContinuation?: boolean) => {
     switch (sectionId) {
       case 'header':
         const personalInfo = {
           ...(results[activeAudience!]?.personal_info as any || {}),
-          name: profileName || results[activeAudience!]?.personal_info?.name || data.personal_info.name,
-          location: profileLocation || results[activeAudience!]?.personal_info?.location || data.personal_info.location,
-          email: profileEmail || results[activeAudience!]?.personal_info?.email || data.personal_info.email,
-          phone: profilePhone || results[activeAudience!]?.personal_info?.phone || data.personal_info.phone,
-          linkedin: profileLinkedIn || results[activeAudience!]?.personal_info?.linkedin || data.personal_info.linkedin,
+          name: profileName || results[activeAudience!]?.personal_info?.name || data.personal_info?.name || '',
+          location: profileLocation || results[activeAudience!]?.personal_info?.location || data.personal_info?.location || '',
+          email: profileEmail || results[activeAudience!]?.personal_info?.email || data.personal_info?.email || '',
+          phone: profilePhone || results[activeAudience!]?.personal_info?.phone || data.personal_info?.phone || '',
+          linkedin: profileLinkedIn || results[activeAudience!]?.personal_info?.linkedin || data.personal_info?.linkedin || '',
           linkedinText: profileLinkedInText || results[activeAudience!]?.personal_info?.linkedinText || '',
-          summary: results[activeAudience!]?.summary || data.personal_info.summary || ''
+          summary: results[activeAudience!]?.summary || data.personal_info?.summary || ''
         } as any;
         return (
           <div 
@@ -1411,9 +1717,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   <div className="font-bold mb-1" style={{ fontSize: '13px' }}>
                     {typeof proj === 'string' ? proj : (proj as any).title}
                   </div>
-                  <div className="opacity-90 leading-relaxed">
-                    {typeof proj === 'string' ? '' : (proj as any).description}
-                  </div>
+                  {typeof proj !== 'string' && (proj as any).description && (
+                    <div className="resume-bullet-item">
+                      <div className="resume-bullet-dot" />
+                      <span className="resume-bullet-text opacity-90 leading-relaxed">
+                        {(proj as any).description}
+                      </span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1595,9 +1906,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
                           }`}
                         >
-                          <span className="truncate">
+                          <span className="truncate flex items-center gap-2">
                             {selectedAudiences.length > 0
-                              ? selectedAudiences.map(id => AUDIENCES.find(a => a.id === id)?.label).join(', ')
+                              ? (
+                                <>
+                                  <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">Auto</span>
+                                  {selectedAudiences.map(id => AUDIENCES.find(a => a.id === id)?.label || id).join(', ')}
+                                </>
+                              )
                               : 'Select audiences...'}
                           </span>
                           <ChevronDown className="w-4 h-4 opacity-50" />
@@ -1606,6 +1922,26 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <div className={`absolute z-50 w-full mt-1 border rounded-lg shadow-lg max-h-60 overflow-y-auto ${
                             isDarkMode ? 'bg-[#1A1A1A] border-white/10' : 'bg-white border-black/5'
                           }`}>
+                            <div className="p-2 border-b border-white/10 flex gap-2">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAudiences(['microsoft']);
+                                }}
+                                className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 text-emerald-500 rounded hover:bg-emerald-500/20 transition-colors"
+                              >
+                                Reset
+                              </button>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAudiences([]);
+                                }}
+                                className="flex-1 py-1 text-[10px] font-bold uppercase tracking-widest bg-red-500/10 text-red-500 rounded hover:bg-red-500/20 transition-colors"
+                              >
+                                Clear
+                              </button>
+                            </div>
                             {AUDIENCES.map((audience) => (
                               <button
                                 key={audience.id}
@@ -1977,6 +2313,93 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             onChange={(e) => setJobDescription(e.target.value)}
                           />
                           
+                          {/* Suitability Check Section */}
+                          <div className="pt-2">
+                            <button
+                              onClick={handleCheckSuitability}
+                              disabled={isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText}
+                              className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border ${
+                                isCheckingSuitability || (!jobDescription && !jobUrl) || !resumeText
+                                  ? (isDarkMode ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed' : 'bg-black/5 border-black/10 text-black/30 cursor-not-allowed')
+                                  : (isDarkMode ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/30' : 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100')
+                              }`}
+                            >
+                              {isCheckingSuitability ? (
+                                <>
+                                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                  Evaluating Fit...
+                                </>
+                              ) : (
+                                <>
+                                  <Search className="w-4 h-4" />
+                                  Quick Check Suitability
+                                </>
+                              )}
+                            </button>
+
+                            {suitabilityResult && (
+                              <div className={`mt-3 p-4 rounded-xl border ${
+                                suitabilityResult.verdict === 'Strong Match' 
+                                  ? (isDarkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200')
+                                  : suitabilityResult.verdict === 'Stretch Role'
+                                    ? (isDarkMode ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200')
+                                    : (isDarkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-200')
+                              }`}>
+                                <div className="flex items-center justify-between mb-3">
+                                  <div className="flex items-center gap-2">
+                                    {suitabilityResult.verdict === 'Strong Match' && <CheckCircle2 className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />}
+                                    {suitabilityResult.verdict === 'Stretch Role' && <AlertCircle className={`w-5 h-5 ${isDarkMode ? 'text-amber-400' : 'text-amber-600'}`} />}
+                                    {suitabilityResult.verdict === 'Not Recommended' && <AlertCircle className={`w-5 h-5 ${isDarkMode ? 'text-red-400' : 'text-red-600'}`} />}
+                                    <span className={`font-bold ${
+                                      suitabilityResult.verdict === 'Strong Match' ? (isDarkMode ? 'text-emerald-400' : 'text-emerald-700') :
+                                      suitabilityResult.verdict === 'Stretch Role' ? (isDarkMode ? 'text-amber-400' : 'text-amber-700') :
+                                      (isDarkMode ? 'text-red-400' : 'text-red-700')
+                                    }`}>
+                                      {suitabilityResult.verdict}
+                                    </span>
+                                  </div>
+                                  <div className={`text-sm font-bold px-2 py-1 rounded-md ${
+                                    suitabilityResult.matchScore >= 80 ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' :
+                                    suitabilityResult.matchScore >= 60 ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' :
+                                    'bg-red-500/20 text-red-600 dark:text-red-400'
+                                  }`}>
+                                    {suitabilityResult.matchScore}% Match
+                                  </div>
+                                </div>
+                                
+                                <p className={`text-sm mb-3 ${isDarkMode ? 'text-white/80' : 'text-black/80'}`}>
+                                  {suitabilityResult.reasoning}
+                                </p>
+
+                                {suitabilityResult.dealbreakers.length > 0 && (
+                                  <div className="mb-3">
+                                    <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>Dealbreakers</span>
+                                    <ul className="mt-1 space-y-1">
+                                      {suitabilityResult.dealbreakers.map((db, i) => (
+                                        <li key={i} className={`text-xs flex items-start gap-1.5 ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
+                                          <span className="text-red-500 mt-0.5">•</span> {db}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {suitabilityResult.strengths.length > 0 && (
+                                  <div>
+                                    <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Key Strengths</span>
+                                    <ul className="mt-1 space-y-1">
+                                      {suitabilityResult.strengths.map((str, i) => (
+                                        <li key={i} className={`text-xs flex items-start gap-1.5 ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
+                                          <span className="text-emerald-500 mt-0.5">•</span> {str}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          
                           {/* Optimize Button Section */}
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
                             <div className="flex gap-3">
@@ -2092,28 +2515,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
                           <p className="text-sm font-medium">Logged in as: {user.email}</p>
                         </div>
-                        
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Gemini API Key</label>
-                          <input 
-                            type="password"
-                            placeholder="Enter your Gemini API Key"
-                            value={apiKey}
-                            onChange={(e) => {
-                              setApiKey(e.target.value);
-                              setIsApiKeySaved(false);
-                            }}
-                            className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
-                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
-                            }`}
-                          />
-                        </div>
 
                         <div>
                           <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">OpenAI API Key</label>
                           <input 
                             type="password"
-                            placeholder="Enter your OpenAI API Key"
+                            placeholder="Enter your OpenAI API Key (Optional)"
                             value={openaiApiKey}
                             onChange={(e) => {
                               setOpenaiApiKey(e.target.value);
@@ -2562,6 +2969,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     onRestore={restoreVersion}
                     currentResults={results}
                     activeAudience={activeAudience}
+                    selectedAudiences={selectedAudiences}
                     setResumeText={setResumeText}
                     runOptimization={handleOptimize}
                   />
@@ -2828,6 +3236,29 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <div className="w-3 h-3 rounded-full bg-green-500/50" />
                         </div>
                         <div className="h-4 w-[1px] bg-white/10 mx-2 hidden sm:block" />
+                        <div className="flex items-center gap-1 bg-black/20 dark:bg-white/5 p-1 rounded-lg">
+                          <button 
+                            onClick={() => setPreviewMode('standard')}
+                            className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest rounded-md transition-all ${
+                              previewMode === 'standard' 
+                                ? 'bg-emerald-500 text-white shadow-sm' 
+                                : 'opacity-40 hover:opacity-100'
+                            }`}
+                          >
+                            Standard
+                          </button>
+                          <button 
+                            onClick={() => setPreviewMode('simplified')}
+                            className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest rounded-md transition-all ${
+                              previewMode === 'simplified' 
+                                ? 'bg-emerald-500 text-white shadow-sm' 
+                                : 'opacity-40 hover:opacity-100'
+                            }`}
+                          >
+                            Workday
+                          </button>
+                        </div>
+                        <div className="h-4 w-[1px] bg-white/10 mx-2 hidden sm:block" />
                         <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">
                           Editing: <span className="text-emerald-400">{activeSection || 'Select a section'}</span>
                         </span>
@@ -2878,6 +3309,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <span className="hidden md:inline">Copy Text</span>
                         </button>
                         <button 
+                          onClick={downloadDOCX}
+                          className="p-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-xs font-bold uppercase tracking-wider flex items-center gap-2"
+                          title="Download as Word Document"
+                        >
+                          <FileDown className="w-4 h-4" />
+                          <span className="hidden sm:inline">DOCX</span>
+                        </button>
+                        <button 
                           onClick={downloadPDF}
                           disabled={isDownloading}
                           className="p-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors text-xs font-bold uppercase tracking-wider flex items-center gap-2 disabled:opacity-50"
@@ -2912,21 +3351,27 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           id="resume-container"
                           className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                         >
-                          {/* Page 1 */}
-                          <div className={`resume-page ${isDownloading ? 'page-break-after-always' : 'mb-8'}`}>
-                            {renderSection('header')}
-                            {renderSection('summary')}
-                            {renderSection('skills')}
-                            {renderSection('certifications')}
-                            {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(0, 3))}
-                          </div>
+                          {previewMode === 'standard' ? (
+                            <>
+                              {/* Page 1 */}
+                              <div className={`resume-page ${isDownloading ? 'page-break-after-always' : 'mb-8'}`}>
+                                {renderSection('header')}
+                                {renderSection('summary')}
+                                {renderSection('skills')}
+                                {renderSection('certifications')}
+                                {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(0, 3))}
+                              </div>
 
-                          {/* Page 2 */}
-                          <div className="resume-page">
-                            {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(3), true)}
-                            {renderSection('projects')}
-                            {renderSection('education')}
-                          </div>
+                              {/* Page 2 */}
+                              <div className="resume-page">
+                                {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(3), true)}
+                                {renderSection('projects')}
+                                {renderSection('education')}
+                              </div>
+                            </>
+                          ) : (
+                            renderSimplifiedResume()
+                          )}
                         </div>
                       </div>
                     </div>

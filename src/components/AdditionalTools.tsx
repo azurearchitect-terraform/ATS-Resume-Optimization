@@ -13,6 +13,7 @@ interface AdditionalToolsProps {
   onRestore?: (version: any) => void;
   currentResults?: any;
   activeAudience?: string | null;
+  selectedAudiences?: string[];
   setResumeText: (text: string) => void;
   runOptimization: () => Promise<void>;
 }
@@ -28,6 +29,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   onRestore,
   currentResults,
   activeAudience,
+  selectedAudiences,
   setResumeText,
   runOptimization
 }) => {
@@ -40,33 +42,9 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (activeAudience && currentResults && currentResults[activeAudience]) {
-      const res = currentResults[activeAudience];
-      // If we have keyword gap from the main optimization, use it
-      if (res.keyword_gap && res.keyword_gap.length > 0) {
-        setSkillGap({
-          missing: res.keyword_gap,
-          present: res.ats_keywords_added_to_resume || []
-        });
-      }
-    }
-  }, [activeAudience, currentResults]);
-
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [saveName, setSaveName] = useState('');
-
-  useEffect(() => {
-    const loadHistory = () => {
-      const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
-      setHistory(savedHistory);
-    };
-    loadHistory();
-    
-    window.addEventListener('resumeHistoryUpdated', loadHistory);
-    return () => window.removeEventListener('resumeHistoryUpdated', loadHistory);
-  }, []);
 
   const runSkillGap = async () => {
     if (!resumeText || !jobDescription) {
@@ -96,6 +74,33 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     }
     setIsLoading(false);
   };
+
+  useEffect(() => {
+    if (activeAudience && currentResults && currentResults[activeAudience]) {
+      const res = currentResults[activeAudience];
+      // If we have keyword gap from the main optimization, use it
+      if (res.keyword_gap && res.keyword_gap.length > 0) {
+        setSkillGap({
+          missing: res.keyword_gap,
+          present: res.ats_keywords_added_to_resume || []
+        });
+      } else if (activeTab === 'skillGap' && !isLoading && !skillGap) {
+        // If missing from results but we are on the tab, try to run it automatically
+        runSkillGap();
+      }
+    }
+  }, [activeAudience, currentResults, activeTab, isLoading, skillGap]);
+
+  useEffect(() => {
+    const loadHistory = () => {
+      const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
+      setHistory(savedHistory);
+    };
+    loadHistory();
+    
+    window.addEventListener('resumeHistoryUpdated', loadHistory);
+    return () => window.removeEventListener('resumeHistoryUpdated', loadHistory);
+  }, []);
 
   const [selectedMissingSkills, setSelectedMissingSkills] = useState<string[]>([]);
 
@@ -208,12 +213,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       data: { 
         resumeText, 
         jobDescription,
-        results: currentResults
+        targetRole,
+        companyName,
+        results: currentResults,
+        activeAudience,
+        selectedAudiences,
       } 
     };
-    const newHistory = [newVersion, ...history].slice(0, 10);
+    const newHistory = [newVersion, ...history].slice(0, 50);
     setHistory(newHistory);
     localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
+    window.dispatchEvent(new CustomEvent('resumeHistoryUpdated'));
     if (typeof customName !== 'string') {
       setSaveName('');
     }
@@ -253,7 +263,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html, css: '', fonts: [] })
+        body: JSON.stringify({ html, css: '', fonts: [], title: `Cover_Letter_${Date.now()}` })
       });
 
       if (!sessionResponse.ok) {
