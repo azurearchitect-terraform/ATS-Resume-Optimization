@@ -17,12 +17,49 @@
           "type": "string",
           "description": "The user's master resume data."
         },
+        "customPrompt": {
+          "type": "string",
+          "description": "The user's custom AI optimization prompt."
+        },
+        "settings": {
+          "type": "object",
+          "description": "User preferences and settings.",
+          "properties": {
+            "versioningEnabled": { "type": "boolean" },
+            "isAutosaveEnabled": { "type": "boolean" },
+            "isDriveConnected": { "type": "boolean" }
+          }
+        },
         "updatedAt": {
           "type": "timestamp",
           "description": "When the profile was last updated."
         }
       },
       "required": ["userId", "encryptedApiKey", "masterResume"]
+    },
+    "ResumeVersion": {
+      "title": "ResumeVersion",
+      "description": "Stores a saved version of a resume.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique identifier for the user."
+        },
+        "timestamp": {
+          "type": "timestamp",
+          "description": "The timestamp when the version was saved."
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the saved version."
+        },
+        "data": {
+          "type": "object",
+          "description": "The resume data for this version."
+        }
+      },
+      "required": ["userId", "timestamp", "name", "data"]
     }
   },
   "firestore": {
@@ -31,6 +68,12 @@
         "$ref": "#/entities/UserProfile"
       },
       "description": "Collection of user profiles."
+    },
+    "/users/{userId}/resumeVersions/{versionId}": {
+      "schema": {
+        "$ref": "#/entities/ResumeVersion"
+      },
+      "description": "Collection of saved resume versions for a user."
     }
   }
 }

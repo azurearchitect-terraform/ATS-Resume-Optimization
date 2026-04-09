@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage } from '../services/geminiService';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline } from '../services/geminiService';
 
 interface AdditionalToolsProps {
   resumeText: string;
@@ -16,6 +16,9 @@ interface AdditionalToolsProps {
   selectedAudiences?: string[];
   setResumeText: (text: string) => void;
   runOptimization: () => Promise<void>;
+  currentHeadline?: string;
+  resumeSummary?: string;
+  keySkills?: string[];
 }
 
 export const AdditionalTools: React.FC<AdditionalToolsProps> = ({ 
@@ -31,9 +34,13 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   activeAudience,
   selectedAudiences,
   setResumeText,
-  runOptimization
+  runOptimization,
+  currentHeadline = "",
+  resumeSummary = "",
+  keySkills = []
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage'>('skillGap');
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline'>('skillGap');
+  const [headlineResult, setHeadlineResult] = useState<{headline: string, keywords_used: string[]} | null>(null);
   const [skillGap, setSkillGap] = useState<{missing: string[], present: string[]} | null>(null);
   const [interviewQuestions, setInterviewQuestions] = useState<string[]>([]);
   const [coverLetter, setCoverLetter] = useState<string>('');
@@ -80,10 +87,15 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
       const res = currentResults[activeAudience];
       // If we have keyword gap from the main optimization, use it
       if (res.keyword_gap && res.keyword_gap.length > 0) {
-        setSkillGap({
+        const newSkillGap = {
           missing: res.keyword_gap,
           present: res.ats_keywords_added_to_resume || []
-        });
+        };
+        
+        // Deep compare to prevent infinite loop
+        if (JSON.stringify(skillGap) !== JSON.stringify(newSkillGap)) {
+          setSkillGap(newSkillGap);
+        }
       } else if (activeTab === 'skillGap' && !isLoading && !skillGap) {
         // If missing from results but we are on the tab, try to run it automatically
         runSkillGap();
@@ -171,6 +183,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Failed to generate recruiter message.");
+    }
+    setIsLoading(false);
+  };
+
+  const runHeadlineOptimization = async () => {
+    if (!targetRole) {
+      setError("Please provide a Target Role.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    try {
+      const result = await optimizeHeadline(currentHeadline, resumeSummary, keySkills, targetRole, {
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
+      });
+      setHeadlineResult(result);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to optimize headline.");
     }
     setIsLoading(false);
   };
@@ -360,6 +401,17 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           <History className="w-5 h-5"/>
           Versions
         </button>
+        <button 
+          onClick={() => setActiveTab('headline')} 
+          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+            activeTab === 'headline' 
+              ? 'bg-emerald-500 text-black' 
+              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
+          }`}
+        >
+          <Zap className="w-5 h-5"/>
+          Headline
+        </button>
       </div>
 
       {error && (
@@ -517,6 +569,41 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                   Copy Text
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+      {activeTab === 'headline' && (
+        <div className="space-y-4">
+          <button 
+            onClick={runHeadlineOptimization} 
+            disabled={isLoading} 
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
+          >
+            {isLoading ? 'Optimizing...' : 'Optimize Headline'}
+          </button>
+          {headlineResult && (
+            <div className="space-y-2">
+              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                <div className="font-bold mb-1">Optimized Headline:</div>
+                <div className="text-emerald-500">{headlineResult.headline}</div>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {headlineResult.keywords_used.map((kw, i) => (
+                  <span key={i} className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px]">
+                    {kw}
+                  </span>
+                ))}
+              </div>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(headlineResult.headline);
+                }}
+                className="w-full flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
+              >
+                <Copy className="w-3 h-3" />
+                Copy Headline
+              </button>
             </div>
           )}
         </div>

@@ -11,7 +11,10 @@ export type TaskType =
   | 'interview_questions'
   | 'cover_letter'
   | 'recruiter_message'
-  | 'evaluate_suitability';
+  | 'evaluate_suitability'
+  | 'linkedin_analysis'
+  | 'optimize_headline'
+  | 'optimize_about';
 
 export interface RouterConfig {
   mode: EngineType | 'production';
@@ -45,6 +48,9 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
     case 'interview_questions':
     case 'cover_letter':
     case 'recruiter_message':
+    case 'linkedin_analysis':
+    case 'optimize_headline':
+    case 'optimize_about':
       selectedEngine = 'openai';
       break;
       

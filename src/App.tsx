@@ -31,7 +31,14 @@ import {
   AlignJustify,
   Building,
   HelpCircle,
-  Maximize
+  Maximize,
+  HardDrive,
+  Cloud,
+  RefreshCw,
+  ExternalLink,
+  Edit2,
+  Check,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -39,6 +46,9 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSo
 import { SortableSection } from './components/SortableSection';
 import { AdditionalTools } from './components/AdditionalTools';
 import { StatusIndicator } from './components/StatusIndicator';
+import { Toast, ConfirmDialog } from './components/UI.tsx';
+import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING } from './constants';
+import { downloadDOCX } from './services/exportService';
 import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult } from './types';
 import { detectOverflow } from './overflowDetection';
@@ -47,95 +57,18 @@ import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuit
 import { RouterConfig } from './services/aiRouter';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
 import { saveAs } from 'file-saver';
 
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { handleFirestoreError } from './lib/firebaseUtils';
+import { OperationType } from './types';
 
 // Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 type OptimizationMode = 'conservative' | 'balanced' | 'aggressive';
-
-const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error' | 'info', onClose: () => void }) => {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 3000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  const bgColors = {
-    success: 'bg-emerald-500',
-    error: 'bg-red-500',
-    info: 'bg-blue-500'
-  };
-
-  return (
-    <div className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-white ${bgColors[type]}`}>
-      {type === 'success' && <CheckCircle2 className="w-5 h-5" />}
-      {type === 'error' && <AlertCircle className="w-5 h-5" />}
-      {type === 'info' && <Info className="w-5 h-5" />}
-      <span className="text-sm font-medium">{message}</span>
-    </div>
-  );
-};
-
-const ConfirmDialog = ({ message, onConfirm, onCancel, isDarkMode }: { message: string, onConfirm: () => void, onCancel: () => void, isDarkMode: boolean }) => {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className={`p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4 ${isDarkMode ? 'bg-[#141414] border border-white/10 text-white' : 'bg-white border border-black/5 text-black'}`}>
-        <h3 className="text-lg font-bold mb-4">Confirm Action</h3>
-        <p className="text-sm opacity-80 mb-6">{message}</p>
-        <div className="flex justify-end gap-3">
-          <button onClick={onCancel} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}>Cancel</button>
-          <button onClick={onConfirm} className="px-4 py-2 rounded-lg text-sm font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">Confirm</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const MODE_DESCRIPTIONS = {
-  conservative: "Minimal edits. Preserves your original structure and wording while ensuring basic keyword alignment.",
-  balanced: "The 'Sweet Spot'. Improves clarity, strengthens action verbs, and strategically aligns keywords. Recommended.",
-  aggressive: "Maximum Impact. Rewrites bullets for peak ATS compatibility and high-stakes competitive roles."
-};
-
-const AUDIENCES = [
-  { id: 'general', label: 'General Professional', icon: '👤' },
-  { id: 'microsoft', label: 'Microsoft / Enterprise', icon: '🏢' },
-  { id: 'leadership', label: 'Leadership / Manager', icon: '👔' },
-  { id: 'cloud-architect', label: 'Cloud Architect', icon: '☁️' },
-  { id: 'solution-architect', label: 'Solution Architect', icon: '🏗️' },
-  { id: 'consulting', label: 'Consulting / Client-Facing', icon: '🤝' },
-  { id: 'cloud-eng-mgr', label: 'Cloud Engineering Manager', icon: '⚙️' },
-  { id: 'infra-mgr', label: 'Infrastructure Manager', icon: '🛠️' },
-  { id: 'assoc-director', label: 'Associate Director / Lead roles', icon: '🎖️' },
-  { id: 'director-mid', label: 'Director / Head of Cloud (mid-size)', icon: '📈' },
-  { id: 'director-large', label: 'Director / Head of Cloud (large-size)', icon: '🌐' },
-  { id: 'principal-architect', label: 'Principal Cloud Architect', icon: '💎' },
-  { id: 'cto-vp', label: 'CTO / VP of Engineering', icon: '👑' },
-  { id: 'digital-transform', label: 'Digital Transformation Lead', icon: '⚡' },
-  { id: 'platform-dir', label: 'Platform Engineering Director', icon: '🏗️' }
-];
-
-const MODEL_PRICING: Record<string, { input: number, output: number }> = {
-  // OpenAI
-  'gpt-5.4': { input: 5.00, output: 15.00 },
-  'gpt-5.4-mini': { input: 0.15, output: 0.60 },
-  'gpt-5.4-nano': { input: 0.05, output: 0.20 },
-  'o1': { input: 15.00, output: 60.00 },
-  'o3-mini': { input: 1.10, output: 4.40 },
-  'gpt-4.5': { input: 75.00, output: 150.00 },
-  'gpt-4o': { input: 2.50, output: 10.00 },
-  'gpt-4o-mini': { input: 0.15, output: 0.60 },
-  // Gemini
-  'gemini-3.1-pro-preview': { input: 1.25, output: 5.00 },
-  'gemini-3-flash-preview': { input: 0.075, output: 0.30 },
-  'gemini-flash-latest': { input: 0.075, output: 0.30 },
-  'gemini-3.1-flash-lite-preview': { input: 0.075, output: 0.30 },
-};
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -144,6 +77,39 @@ export default function App() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
   const [encryptedApiKey, setEncryptedApiKey] = useState('');
+  const [isTestingDrive, setIsTestingDrive] = useState(false);
+  const [driveFiles, setDriveFiles] = useState<any[]>([]);
+  const [isFetchingDriveFiles, setIsFetchingDriveFiles] = useState(false);
+  const [renamingDriveFileId, setRenamingDriveFileId] = useState<string | null>(null);
+  const [newDriveFileName, setNewDriveFileName] = useState('');
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [isDriveConnected, setIsDriveConnected] = useState(false);
+  const [driveAccessToken, setDriveAccessToken] = useState<string | null>(() => {
+    return localStorage.getItem('driveAccessToken');
+  });
+  const [versioningEnabled, setVersioningEnabled] = useState(() => {
+    return localStorage.getItem('versioningEnabled') === 'true';
+  });
+  const [isAutosaveEnabled, setIsAutosaveEnabled] = useState(() => {
+    return localStorage.getItem('isAutosaveEnabled') === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('versioningEnabled', versioningEnabled.toString());
+  }, [versioningEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('isAutosaveEnabled', isAutosaveEnabled.toString());
+  }, [isAutosaveEnabled]);
+
+  useEffect(() => {
+    if (driveAccessToken) {
+      localStorage.setItem('driveAccessToken', driveAccessToken);
+    } else {
+      localStorage.removeItem('driveAccessToken');
+    }
+  }, [driveAccessToken]);
+
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void } | null>(null);
 
@@ -167,11 +133,28 @@ export default function App() {
       if (currentUser) {
         try {
           const docRef = doc(db, 'users', currentUser.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
+          const docSnap = await getDoc(docRef).catch(err => {
+            handleFirestoreError(err, OperationType.GET, 'users/' + currentUser.uid);
+            return undefined;
+          });
+          if (docSnap && docSnap.exists()) {
             const data = docSnap.data();
             if (data.masterResume) {
               setResumeText(data.masterResume);
+            }
+            if (data.customPrompt) {
+              setCustomPrompt(data.customPrompt);
+            }
+            if (data.settings) {
+              if (typeof data.settings.versioningEnabled === 'boolean') {
+                setVersioningEnabled(data.settings.versioningEnabled);
+              }
+              if (typeof data.settings.isAutosaveEnabled === 'boolean') {
+                setIsAutosaveEnabled(data.settings.isAutosaveEnabled);
+              }
+              if (typeof data.settings.isDriveConnected === 'boolean') {
+                setIsDriveConnected(data.settings.isDriveConnected);
+              }
             }
             if (data.encryptedApiKey) {
               setEncryptedApiKey(data.encryptedApiKey);
@@ -191,6 +174,135 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  const handleTestDrive = async () => {
+    setIsTestingDrive(true);
+    try {
+      const url = driveAccessToken 
+        ? `/api/test-drive?accessToken=${driveAccessToken}` 
+        : '/api/test-drive';
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.success) {
+        showToast(data.message, 'success');
+        fetchDriveFiles();
+      } else {
+        if (data.error && data.error.includes('AUTH_EXPIRED')) {
+          setDriveAccessToken(null);
+        }
+        showToast(data.error || 'Connection failed', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to reach server', 'error');
+    } finally {
+      setIsTestingDrive(false);
+    }
+  };
+
+  const fetchDriveFiles = async () => {
+    if (!driveAccessToken && !process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return;
+    setIsFetchingDriveFiles(true);
+    try {
+      const url = driveAccessToken 
+        ? `/api/list-drive-files?accessToken=${driveAccessToken}` 
+        : '/api/list-drive-files';
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.success) {
+        setDriveFiles(data.files);
+      } else if (data.error && data.error.includes('AUTH_EXPIRED')) {
+        setDriveAccessToken(null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch Drive files:', err);
+    } finally {
+      setIsFetchingDriveFiles(false);
+    }
+  };
+
+  const handleRenameDriveFile = async (fileId: string) => {
+    if (!newDriveFileName.trim()) return;
+    try {
+      const response = await fetch('/api/rename-drive-file', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          fileId, 
+          newName: newDriveFileName,
+          accessToken: driveAccessToken 
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        showToast('File renamed successfully', 'success');
+        setRenamingDriveFileId(null);
+        setNewDriveFileName('');
+        fetchDriveFiles();
+      } else {
+        if (data.error && data.error.includes('AUTH_EXPIRED')) {
+          setDriveAccessToken(null);
+        }
+        showToast(data.error || 'Failed to rename file', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to rename file', 'error');
+    }
+  };
+
+  const handleDeleteDriveFile = async (fileId: string) => {
+    setConfirmDialog({
+      message: "Are you sure you want to delete this file from Google Drive? This action cannot be undone.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        try {
+          const response = await fetch('/api/delete-drive-file', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              fileId,
+              accessToken: driveAccessToken 
+            })
+          });
+          const data = await response.json();
+          if (data.success) {
+            showToast('File deleted successfully', 'success');
+            fetchDriveFiles();
+          } else {
+            if (data.error && data.error.includes('AUTH_EXPIRED')) {
+              setDriveAccessToken(null);
+            }
+            showToast(data.error || 'Failed to delete file', 'error');
+          }
+        } catch (err) {
+          showToast('Failed to delete file', 'error');
+        }
+      },
+      onCancel: () => setConfirmDialog(null)
+    });
+  };
+
+  useEffect(() => {
+    if (driveAccessToken || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      fetchDriveFiles();
+    }
+  }, [driveAccessToken]);
+
+  const handleConnectDrive = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.addScope('https://www.googleapis.com/auth/drive.file');
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setDriveAccessToken(credential.accessToken);
+        setIsDriveConnected(true);
+        showToast('Google Drive connected successfully!', 'success');
+      }
+    } catch (error: any) {
+      console.error('Drive connection error:', error);
+      showToast('Failed to connect Google Drive', 'error');
+    }
+  };
 
   const handleLogin = async () => {
     try {
@@ -251,8 +363,14 @@ export default function App() {
         userId: user.uid,
         encryptedApiKey: finalEncryptedKey,
         masterResume: resumeText,
+        customPrompt: customPrompt,
+        settings: {
+          versioningEnabled,
+          isAutosaveEnabled,
+          isDriveConnected: !!driveAccessToken || isDriveConnected
+        },
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'users/' + user.uid));
 
       showToast("Profile saved successfully!", "success");
     } catch (err) {
@@ -274,7 +392,7 @@ export default function App() {
           await setDoc(doc(db, 'users', user.uid), {
             encryptedApiKey: "",
             updatedAt: serverTimestamp()
-          }, { merge: true });
+          }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'users/' + user.uid));
           setOpenaiApiKey('');
           setEncryptedApiKey('');
           setIsApiKeySaved(false);
@@ -389,6 +507,26 @@ export default function App() {
   }, [linkedInUrl]);
 
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [resumeVersions, setResumeVersions] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (user) {
+      const loadVersions = async () => {
+        const q = query(collection(db, 'users', user.uid, 'resumeVersions'), orderBy('timestamp', 'desc'));
+        const querySnapshot = await getDocs(q).catch(err => {
+          handleFirestoreError(err, OperationType.LIST, 'users/' + user.uid + '/resumeVersions');
+          return undefined;
+        });
+        if (querySnapshot) {
+          const versions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setResumeVersions(versions);
+        }
+      };
+      loadVersions();
+    } else {
+      setResumeVersions([]);
+    }
+  }, [user]);
 
   useEffect(() => {
     localStorage.setItem('linkedInPdfText', linkedInPdfText);
@@ -410,9 +548,9 @@ export default function App() {
 
   // Sync results with ResumeStore
   useEffect(() => {
-    if (activeAudience && results[activeAudience]) {
-      const res = results[activeAudience];
-      setData({
+    const res = activeAudience ? results[activeAudience] : null;
+    if (res) {
+      const newData: ResumeData = {
         personal_info: {
           name: profileName || res.personal_info?.name || '',
           location: profileLocation || res.personal_info?.location || '',
@@ -423,15 +561,23 @@ export default function App() {
           summary: res.summary || ''
         },
         experience: (res.experience || []).map((e: any, i: number) => ({ ...e, id: `exp_${i}` })),
-        skills: (res.skills || {}) as any, // Cast to any to handle both structures
+        skills: (res.skills || {}) as any,
         education: (res.education && res.education.length > 0) ? res.education as any : data.education,
         projects: (res.projects && res.projects.length > 0) 
           ? res.projects?.map((p: any) => typeof p === 'string' ? p : { title: (p as any).title, description: (p as any).description, isOptional: true as const }) as any
           : data.projects,
         certifications: res.certifications || []
-      });
+      };
+
+      // Use a more robust comparison to avoid infinite loops
+      const currentDataStr = JSON.stringify(data);
+      const newDataStr = JSON.stringify(newData);
+      
+      if (currentDataStr !== newDataStr) {
+        setData(newData);
+      }
     }
-  }, [activeAudience, results, setData, profileName, profileLocation, profileEmail, profilePhone, profileLinkedIn, profileLinkedInText]);
+  }, [activeAudience, results, setData, profileName, profileLocation, profileEmail, profilePhone, profileLinkedIn, profileLinkedInText, data]);
 
   const overflow = detectOverflow(pages);
   const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({});
@@ -454,7 +600,7 @@ export default function App() {
   const [isResizingWidth, setIsResizingWidth] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
-  const saveResumeVersion = (customName?: string) => {
+  const saveResumeVersion = async (customName?: string) => {
     const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
     
     // Avoid saving if identical to last entry
@@ -464,6 +610,8 @@ export default function App() {
         JSON.stringify(lastEntry.data.results) === JSON.stringify(results)) {
       return;
     }
+
+    if (!user) return;
 
     const timestamp = new Date().toISOString();
     let generatedName = customName;
@@ -496,8 +644,21 @@ export default function App() {
       }
     };
 
-    const newHistory = [newVersion, ...savedHistory].slice(0, 50);
-    localStorage.setItem('resumeHistory', JSON.stringify(newHistory));
+    await addDoc(collection(db, 'users', user.uid, 'resumeVersions'), {
+        userId: user.uid,
+        timestamp: serverTimestamp(),
+        name: generatedName,
+        data: {
+          resumeText,
+          jobDescription,
+          targetRole,
+          companyName,
+          results,
+          activeAudience,
+          selectedAudiences,
+          formatting: formattingState
+        }
+      }).catch(err => handleFirestoreError(err, OperationType.CREATE, 'users/' + user.uid + '/resumeVersions'));
     window.dispatchEvent(new CustomEvent('resumeHistoryUpdated'));
   };
 
@@ -543,15 +704,13 @@ export default function App() {
     const saved = localStorage.getItem('tokenUsage');
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed.available !== undefined) {
-        return { input: 0, output: 0, total: 0 };
+      if (parsed.gemini && parsed.openai) {
+        return parsed;
       }
-      return parsed;
     }
     return {
-      input: 0,
-      output: 0,
-      total: 0
+      gemini: { input: 0, output: 0 },
+      openai: { input: 0, output: 0 }
     };
   });
 
@@ -564,6 +723,90 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [isAutoZoom, setIsAutoZoom] = useState(true);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
+
+  // Autosave to Drive logic
+  useEffect(() => {
+    if (!isOptimizing && Object.keys(results).length > 0 && isAutosaveEnabled && (driveAccessToken || process.env.GOOGLE_SERVICE_ACCOUNT_KEY)) {
+      // Small delay to ensure DOM is updated
+      const timer = setTimeout(() => {
+        handleDriveAutosave();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isOptimizing, results, isAutosaveEnabled]);
+
+  const handleDriveAutosave = async () => {
+    try {
+      const element = document.getElementById('resume-container');
+      if (!element) return;
+
+      // Get all styles and imports
+      const allStyles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+        .map(el => {
+          if (el.tagName === 'STYLE') return el.innerHTML;
+          if (el.tagName === 'LINK') {
+            const href = (el as HTMLLinkElement).href;
+            if (href.includes('fonts.googleapis.com')) return `@import url('${href}');`;
+          }
+          return '';
+        })
+        .join('\n');
+
+      const role = targetRole || 'Resume';
+      const company = companyName ? `-${companyName}` : '';
+      const pdfTitle = `${role}${company}_Harnish Jariwala`;
+
+      const sessionResponse = await fetch('/api/pdf-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: element.outerHTML,
+          css: allStyles,
+          title: pdfTitle,
+          fonts: customFonts.map(font => `
+            @font-face {
+              font-family: '${font.name}';
+              src: url('${font.url}') format('${font.format}');
+            }
+          `).join('\n')
+        }),
+      });
+
+      if (!sessionResponse.ok) return;
+      const { sessionId } = await sessionResponse.json();
+      
+      const pdfResponse = await fetch(`/api/download-pdf/${sessionId}`);
+      if (!pdfResponse.ok) return;
+      
+      const blob = await pdfResponse.blob();
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64data = (reader.result as string).split(',')[1];
+        
+        const saveResponse = await fetch('/api/save-to-drive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pdfData: base64data,
+            fileName: `${pdfTitle}.pdf`,
+            versioningEnabled: versioningEnabled,
+            accessToken: driveAccessToken
+          })
+        });
+        
+        const saveData = await saveResponse.json();
+        if (saveResponse.ok && saveData.success) {
+          showToast('Autosaved to Google Drive', 'success');
+          fetchDriveFiles();
+        } else if (saveData.error && saveData.error.includes('AUTH_EXPIRED')) {
+          setDriveAccessToken(null);
+        }
+      };
+    } catch (err) {
+      console.error('Autosave error:', err);
+    }
+  };
 
   const handleFontUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -852,6 +1095,23 @@ export default function App() {
   const handleOptimize = async () => {
     console.log("handleOptimize called");
     setError("Optimization started...");
+    
+    const routerConfig = getRouterConfig();
+    
+    // Check for missing API keys
+    if (selectedEngine === 'openai' && !routerConfig.openaiConfig.apiKey) {
+      setError("API keys are now managed securely in your Profile. Please go to the Profile tab and save your OpenAI API key.");
+      return;
+    }
+    if (selectedEngine === 'gemini' && !routerConfig.geminiConfig.apiKey) {
+      setError("API keys are now managed securely in your Profile. Please go to the Profile tab and save your Gemini API key.");
+      return;
+    }
+    if (selectedEngine === 'production' && (!routerConfig.openaiConfig.apiKey || !routerConfig.geminiConfig.apiKey)) {
+      setError("Hybrid Mode requires both OpenAI and Gemini API keys. Please go to the Profile tab and save your API keys.");
+      return;
+    }
+
     if (!jobDescription && !jobUrl) {
       setError('Please provide a job description or job URL to optimize against.');
       return;
@@ -936,18 +1196,22 @@ export default function App() {
           linkedInPdfText, 
           jobUrl, 
           fastMode, 
-          recruiterSimulationMode
+          recruiterSimulationMode,
+          customPrompt
         );
         
         completedAudiences++;
         setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
         
         // Update token usage
-        if (data._usage) {
+        if (data._usage && data._engine) {
+          const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
           setTokenUsage(prev => ({
-            input: (prev.input || 0) + (data._usage!.promptTokenCount || 0),
-            output: (prev.output || 0) + (data._usage!.candidatesTokenCount || 0),
-            total: (prev.total || 0) + (data._usage!.totalTokenCount || 0)
+            ...prev,
+            [engine]: {
+              input: (prev[engine].input || 0) + (data._usage!.promptTokenCount || 0),
+              output: (prev[engine].output || 0) + (data._usage!.candidatesTokenCount || 0)
+            }
           }));
         }
 
@@ -1153,11 +1417,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         })
         .join('\n');
 
-      const parts = [];
-      if (targetRole) parts.push(targetRole.replace(/\s+/g, '_'));
-      if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
-      if (parts.length === 0) parts.push('Resume');
-      const pdfTitle = `${parts.join('_')}_Harnish_Jariwala`;
+      const role = targetRole || 'Resume';
+      const company = companyName ? `-${companyName}` : '';
+      const pdfTitle = `${role}${company}_Harnish Jariwala`;
 
       const sessionResponse = await fetch('/api/pdf-session', {
         method: 'POST',
@@ -1198,6 +1460,46 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       }
       
       const blob = await pdfResponse.blob();
+
+      // Convert blob to base64 for Drive saving
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64data = (reader.result as string).split(',')[1];
+        
+        // Save to Google Drive
+        try {
+          const driveSaveResponse = await fetch('/api/save-to-drive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pdfData: base64data,
+              fileName: `${pdfTitle}.pdf`,
+              versioningEnabled: versioningEnabled,
+              accessToken: driveAccessToken
+            })
+          });
+          
+          if (driveSaveResponse.ok) {
+            showToast('Resume saved to Google Drive!', 'success');
+          } else {
+            const driveError = await driveSaveResponse.json();
+            console.error('Drive save error:', driveError);
+            
+            if (driveError.error && driveError.error.includes('AUTH_EXPIRED')) {
+              setDriveAccessToken(null);
+            }
+
+            // Only show error if it's not just a missing env var (which is expected until configured)
+            if (driveError.error && !driveError.error.includes("GOOGLE_SERVICE_ACCOUNT_KEY")) {
+              showToast('Failed to save to Google Drive', 'error');
+            }
+          }
+        } catch (driveErr) {
+          console.error('Drive save fetch error:', driveErr);
+        }
+      };
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -1221,170 +1523,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     }
   };
 
-  const downloadDOCX = async () => {
+  const handleDownloadDOCX = async () => {
     const res = results[activeAudience!] || data;
-    if (!res) return;
-
-    try {
-      const doc = new Document({
-        sections: [
-          {
-            properties: {},
-            children: [
-              // Header - 2 Lines
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: res.personal_info?.name || '',
-                    bold: true,
-                    size: 28, // 14pt
-                  }),
-                ],
-                alignment: AlignmentType.CENTER,
-              }),
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: `${res.personal_info?.location || ''} | ${res.personal_info?.email || ''} | ${res.personal_info?.phone || ''} | ${res.personal_info?.linkedin || ''}`,
-                    size: 18, // 9pt
-                  }),
-                ],
-                alignment: AlignmentType.CENTER,
-                spacing: { after: 200 },
-              }),
-
-              // Summary
-              new Paragraph({
-                text: "PROFESSIONAL SUMMARY",
-                heading: HeadingLevel.HEADING_1,
-                spacing: { before: 200, after: 100 },
-              }),
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: (res as any).summary || (res as any).personal_info?.summary || "",
-                    size: 20, // 10pt
-                  }),
-                ],
-                spacing: { after: 200 },
-              }),
-
-              // Skills
-              new Paragraph({
-                text: "TECHNICAL SKILLS",
-                heading: HeadingLevel.HEADING_1,
-                spacing: { before: 200, after: 100 },
-              }),
-              new Paragraph({
-                text: Array.isArray(res.skills) 
-                  ? res.skills.join(", ") 
-                  : Object.entries(res.skills).map(([cat, skills]) => `${cat}: ${(skills as string[]).join(", ")}`).join(" | "),
-                spacing: { after: 200 },
-              }),
-
-              // Experience
-              new Paragraph({
-                text: "PROFESSIONAL EXPERIENCE",
-                heading: HeadingLevel.HEADING_1,
-                spacing: { before: 200, after: 100 },
-              }),
-              ...res.experience.flatMap((exp: any) => [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: exp.role, bold: true }),
-                    new TextRun({ text: `\t${exp.duration}`, bold: true }),
-                  ],
-                  tabStops: [
-                    {
-                      type: AlignmentType.RIGHT,
-                      position: 9000,
-                    },
-                  ],
-                }),
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: exp.company, italics: true, color: "444444" }),
-                  ],
-                  spacing: { after: 100 },
-                }),
-                ...exp.bullets.map((bullet: string) => 
-                  new Paragraph({
-                    text: bullet,
-                    bullet: { level: 0 },
-                  })
-                ),
-                new Paragraph({ text: "", spacing: { after: 200 } }),
-              ]),
-
-              // Projects
-              ...(res.projects && res.projects.length > 0 ? [
-                new Paragraph({
-                  text: "STRATEGIC PROJECTS",
-                  heading: HeadingLevel.HEADING_1,
-                  spacing: { before: 200, after: 100 },
-                }),
-                ...res.projects.flatMap((proj: any) => [
-                  new Paragraph({
-                    children: [
-                      new TextRun({ text: typeof proj === 'string' ? proj : proj.title, bold: true }),
-                    ],
-                  }),
-                  ...(typeof proj !== 'string' && proj.description ? [
-                    new Paragraph({
-                      text: proj.description,
-                      bullet: { level: 0 },
-                      spacing: { after: 100 },
-                    })
-                  ] : [
-                    new Paragraph({ text: "", spacing: { after: 100 } })
-                  ]),
-                ]),
-              ] : []),
-
-              // Certifications
-              ...(res.certifications && res.certifications.length > 0 ? [
-                new Paragraph({
-                  text: "CERTIFICATIONS",
-                  heading: HeadingLevel.HEADING_1,
-                  spacing: { before: 200, after: 100 },
-                }),
-                ...res.certifications.map((cert: string) => 
-                  new Paragraph({
-                    text: cert,
-                    bullet: { level: 0 },
-                  })
-                ),
-              ] : []),
-
-              // Education
-              new Paragraph({
-                text: "EDUCATION",
-                heading: HeadingLevel.HEADING_1,
-                spacing: { before: 200, after: 100 },
-              }),
-              ...res.education.map((edu: any) => 
-                new Paragraph({
-                  text: typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`,
-                  bullet: { level: 0 },
-                })
-              ),
-            ],
-          },
-        ],
-      });
-
-      const blob = await Packer.toBlob(doc);
-      const parts = [];
-      if (targetRole) parts.push(targetRole.replace(/\s+/g, '_'));
-      if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
-      if (parts.length === 0) parts.push('Resume');
-      
-      saveAs(blob, `${parts.join('_')}_Harnish_Jariwala.docx`);
-      showToast('DOCX Downloaded successfully!', 'success');
-    } catch (err: any) {
-      console.error('DOCX Generation Error:', err);
-      showToast('Failed to generate DOCX. Please try again.', 'error');
-    }
+    await downloadDOCX(res, targetRole, companyName, showToast);
   };
 
   const copyToClipboard = (text: string) => {
@@ -1433,7 +1574,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         {/* Experience */}
         <div className="mb-4">
           <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Professional Experience</h2>
-          {res.experience.map((exp: any, i: number) => (
+          {Array.isArray(res.experience) && res.experience.map((exp: any, i: number) => (
             <div key={i} className="mb-3">
               <div className="flex justify-between font-bold text-[11px]">
                 <span>{exp.role}</span>
@@ -1441,7 +1582,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               </div>
               <div className="italic mb-0.5 text-[10.5px] opacity-90">{exp.company}</div>
               <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
-                {exp.bullets.map((bullet: string, bi: number) => (
+                {Array.isArray(exp.bullets) && exp.bullets.map((bullet: string, bi: number) => (
                   <li key={bi} className="leading-snug">{bullet}</li>
                 ))}
               </ul>
@@ -1450,7 +1591,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         </div>
 
         {/* Projects */}
-        {res.projects && res.projects.length > 0 && (
+        {Array.isArray(res.projects) && res.projects.length > 0 && (
           <div className="mb-4">
             <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Strategic Projects</h2>
             {res.projects.map((proj: any, i: number) => (
@@ -1467,7 +1608,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         )}
 
         {/* Certifications */}
-        {res.certifications && res.certifications.length > 0 && (
+        {Array.isArray(res.certifications) && res.certifications.length > 0 && (
           <div className="mb-4">
             <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Certifications</h2>
             <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
@@ -1479,16 +1620,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         )}
 
         {/* Education */}
-        <div className="mb-4">
-          <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Education</h2>
-          <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
-            {res.education.map((edu: any, i: number) => (
-              <li key={i}>
-                {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}
-              </li>
-            ))}
-          </ul>
-        </div>
+        {Array.isArray(res.education) && res.education.length > 0 && (
+          <div className="mb-4">
+            <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Education</h2>
+            <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
+              {res.education.map((edu: any, i: number) => (
+                <li key={i}>
+                  {typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (${edu.expected_completion})`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     );
   };
@@ -1648,7 +1791,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         );
       case 'experience':
         const allExp = customExp || results[activeAudience!]?.experience || data.experience;
-        if (!allExp || allExp.length === 0) return null;
+        if (!Array.isArray(allExp) || allExp.length === 0) return null;
         return (
           <div 
             key={isContinuation ? "experience-split-2" : "experience"}
@@ -1677,7 +1820,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                 </div>
                 <div className="font-semibold mb-2 text-emerald-700" style={{ fontSize: '12px' }}>{exp.company}</div>
                 <div className="space-y-1">
-                  {exp.bullets.map((b: string, bi: number) => (
+                  {Array.isArray(exp.bullets) && exp.bullets.map((b: string, bi: number) => (
                     <div key={bi} className="resume-bullet-item">
                       <div className="resume-bullet-dot" />
                       <span className="resume-bullet-text opacity-90 leading-relaxed">{b}</span>
@@ -1689,10 +1832,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'projects':
-        const allProjects = (results[activeAudience!]?.projects && results[activeAudience!]?.projects.length > 0) 
+        const allProjects = (Array.isArray(results[activeAudience!]?.projects) && results[activeAudience!]?.projects.length > 0) 
           ? results[activeAudience!]?.projects 
           : data.projects;
-        if (!allProjects || allProjects.length === 0) return null;
+        if (!Array.isArray(allProjects) || allProjects.length === 0) return null;
         return (
           <div 
             key="projects"
@@ -1731,10 +1874,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
         );
       case 'education':
-        const allEdu = (results[activeAudience!]?.education && results[activeAudience!]?.education.length > 0) 
+        const allEdu = (Array.isArray(results[activeAudience!]?.education) && results[activeAudience!]?.education.length > 0) 
           ? results[activeAudience!]?.education 
           : data.education || [];
-        if (!allEdu || allEdu.length === 0) return null;
+        if (!Array.isArray(allEdu) || allEdu.length === 0) return null;
         return (
           <div 
             key="education"
@@ -2201,14 +2344,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                            )}
 
                            <div className="space-y-4">
-                             <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-2 opacity-50">
-                               Authentication Keys
-                             </label>
-                             <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
-                               <p className="text-xs opacity-70">
-                                 API keys are now managed securely in your <button onClick={() => setActiveTab('profile')} className="text-emerald-500 font-bold hover:underline">Profile</button>.
-                               </p>
-                             </div>
+                             {/* Removed Authentication Keys message per user request */}
                            </div>
                          </div>
                        </div>
@@ -2400,6 +2536,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             )}
                           </div>
                           
+                          {/* Custom AI Optimization Prompt */}
+                          <div className="mt-4">
+                            <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Custom AI Optimization Prompt (Optional)</label>
+                            <textarea 
+                              placeholder="Add your own instructions for the AI (e.g., 'Focus more on my cloud architecture experience' or 'Use a more formal British English tone')"
+                              value={customPrompt}
+                              onChange={(e) => setCustomPrompt(e.target.value)}
+                              rows={3}
+                              className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none text-sm ${
+                                isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                              }`}
+                            />
+                            <p className="text-[10px] opacity-40 mt-1">These instructions will be given high priority during the resume optimization process.</p>
+                          </div>
+                          
                           {/* Optimize Button Section */}
                           <div className="pt-4 border-t border-black/5 dark:border-white/10">
                             <div className="flex gap-3">
@@ -2445,42 +2596,46 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
                             {/* Token Usage Display */}
                             <div className={`mt-4 p-3 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
-                              <div className="flex justify-between items-center mb-2">
+                              <div className="flex justify-between items-center mb-3">
                                 <div className="flex items-center gap-2">
                                   <Cpu className="w-3 h-3 opacity-50" />
-                                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Usage & Pricing</span>
+                                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
                                 </div>
-                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{selectedEngine}</span>
+                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{selectedEngine === 'production' ? 'Hybrid Mode' : selectedEngine}</span>
                               </div>
-                              <div className="grid grid-cols-3 gap-2 mb-3 pb-3 border-b border-black/5 dark:border-white/5">
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Model</span>
-                                  <span className="text-[10px] font-mono font-bold truncate" title={engineConfig[selectedEngine].model}>{engineConfig[selectedEngine].model}</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Input / 1M</span>
-                                  <span className="text-[10px] font-mono font-bold">${MODEL_PRICING[engineConfig[selectedEngine].model]?.input.toFixed(2) || 'N/A'}</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Output / 1M</span>
-                                  <span className="text-[10px] font-mono font-bold">${MODEL_PRICING[engineConfig[selectedEngine].model]?.output.toFixed(2) || 'N/A'}</span>
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-3 gap-2">
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
-                                  <span className="text-xs font-mono font-bold">{(tokenUsage.input / 1000).toFixed(1)}k</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
-                                  <span className="text-xs font-mono font-bold">{(tokenUsage.output / 1000).toFixed(1)}k</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] uppercase opacity-40 font-bold">Est. Cost</span>
-                                  <span className="text-xs font-mono font-bold text-emerald-500">
-                                    ${((tokenUsage.input / 1000000) * (MODEL_PRICING[engineConfig[selectedEngine].model]?.input || 0) + (tokenUsage.output / 1000000) * (MODEL_PRICING[engineConfig[selectedEngine].model]?.output || 0)).toFixed(4)}
-                                  </span>
-                                </div>
+                              
+                              <div className="space-y-3">
+                                {(selectedEngine === 'gemini' || selectedEngine === 'production') && (
+                                  <div className={selectedEngine === 'production' ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
+                                    {selectedEngine === 'production' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">Gemini</span>}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.gemini.input / 1000).toFixed(1)}k</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.gemini.output / 1000).toFixed(1)}k</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {(selectedEngine === 'openai' || selectedEngine === 'production') && (
+                                  <div>
+                                    {selectedEngine === 'production' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">OpenAI</span>}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.input / 1000).toFixed(1)}k</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.output / 1000).toFixed(1)}k</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -2530,7 +2685,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
                             }`}
                           />
-                          <p className="text-xs opacity-50 mt-2">Your API keys are encrypted before being stored and are never exposed to the frontend.</p>
                         </div>
 
                         <button
@@ -2542,7 +2696,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20'
                           }`}
                         >
-                          {isSavingProfile ? 'Saving...' : 'Save Profile & Master Resume'}
+                          {isSavingProfile ? 'Saving...' : 'Save All Settings & Profile'}
                         </button>
 
                         <div className="mt-4">
@@ -2562,8 +2716,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             setConfirmDialog({
                               message: "Are you sure you want to clear your saved API keys?",
                               onConfirm: async () => {
+                                if (!user) return;
                                 setConfirmDialog(null);
-                                setApiKey('');
                                 setOpenaiApiKey('');
                                 setEncryptedApiKey('');
                                 setIsApiKeySaved(false);
@@ -2586,6 +2740,101 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         <p>Please login to save your API key and master resume.</p>
                       </div>
                     )}
+                  </section>
+
+                  <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
+                    <div className="flex items-center gap-2 mb-6">
+                      <HardDrive className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                      <h2 className="font-semibold text-lg">Google Drive Settings</h2>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="p-4 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <div className="font-bold text-sm">OAuth Connection</div>
+                            <div className="text-xs opacity-60">Connect your personal Google Drive</div>
+                          </div>
+                          <button
+                            onClick={handleConnectDrive}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                              driveAccessToken 
+                                ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
+                                : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20'
+                            }`}
+                          >
+                            {driveAccessToken ? 'Connected' : (isDriveConnected ? 'Reconnect Drive' : 'Connect Drive')}
+                          </button>
+                        </div>
+                        
+                        {isDriveConnected && !driveAccessToken && (
+                          <div className="mb-4 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[10px] flex items-center gap-2">
+                            <AlertCircle className="w-3 h-3" />
+                            <span>Drive connection expired or not found on this device. Please reconnect to sync your files.</span>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                          <div className="flex-1">
+                            <div className="font-bold text-xs sm:text-sm">Versioning</div>
+                            <div className="text-[10px] sm:text-xs opacity-60">Save new versions instead of overwriting</div>
+                          </div>
+                          <button
+                            onClick={() => setVersioningEnabled(!versioningEnabled)}
+                            className={`relative inline-flex h-5 w-9 sm:h-6 sm:w-11 items-center rounded-full transition-all focus:outline-none shrink-0 ${
+                              versioningEnabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-3 w-3 sm:h-4 sm:w-4 transform rounded-full bg-white transition-transform ${
+                                versioningEnabled ? 'translate-x-5 sm:translate-x-6' : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="font-bold text-xs sm:text-sm">Autosave on Generate</div>
+                            <div className="text-[10px] sm:text-xs opacity-60">Automatically save to Drive after optimization</div>
+                          </div>
+                          <button
+                            onClick={() => setIsAutosaveEnabled(!isAutosaveEnabled)}
+                            className={`relative inline-flex h-5 w-9 sm:h-6 sm:w-11 items-center rounded-full transition-all focus:outline-none shrink-0 ${
+                              isAutosaveEnabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-3 w-3 sm:h-4 sm:w-4 transform rounded-full bg-white transition-transform ${
+                                isAutosaveEnabled ? 'translate-x-5 sm:translate-x-6' : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs opacity-60">
+                        <div className={`w-2 h-2 rounded-full ${driveAccessToken ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                        Drive Connection: {driveAccessToken ? 'Active' : 'Not Connected'}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs opacity-60">
+                        <div className={`w-2 h-2 rounded-full ${versioningEnabled ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                        Versioning is {versioningEnabled ? 'Enabled' : 'Disabled'}
+                      </div>
+                      <button
+                        onClick={handleTestDrive}
+                        disabled={isTestingDrive}
+                        className={`w-full mt-2 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border ${
+                          isDarkMode ? 'border-white/10 hover:bg-white/5' : 'border-black/5 hover:bg-black/5'
+                        }`}
+                      >
+                        {isTestingDrive ? (
+                          <div className="w-3 h-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                        )}
+                        Test Drive Connection
+                      </button>
+                    </div>
                   </section>
 
                   <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
@@ -2972,7 +3221,120 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     selectedAudiences={selectedAudiences}
                     setResumeText={setResumeText}
                     runOptimization={handleOptimize}
+                    currentHeadline={""}
+                    resumeSummary={data.personal_info.summary || ""}
+                    keySkills={typeof data.skills === 'object' && !Array.isArray(data.skills) ? Object.values(data.skills).flat() : (data.skills as string[])}
                   />
+
+                  {/* Google Drive Backups */}
+                  {driveAccessToken && (
+                    <div className={`rounded-xl border overflow-hidden transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                      <div className="p-4 border-b border-black/5 dark:border-white/10 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-blue-500/20 text-blue-500">
+                            <Cloud className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-sm">Drive Backups</h3>
+                            <p className="text-[10px] opacity-50">PDFs saved to Google Drive</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={fetchDriveFiles}
+                          disabled={isFetchingDriveFiles}
+                          className={`p-2 rounded-lg hover:bg-white/5 transition-colors ${isFetchingDriveFiles ? 'animate-spin opacity-50' : ''}`}
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="p-2 max-h-60 overflow-y-auto custom-scrollbar">
+                        {isFetchingDriveFiles && driveFiles.length === 0 ? (
+                          <div className="py-8 text-center opacity-40 text-[10px] uppercase tracking-widest">
+                            Fetching files...
+                          </div>
+                        ) : driveFiles.length > 0 ? (
+                          <div className="space-y-1">
+                            {driveFiles.map((file) => (
+                              <div 
+                                key={file.id}
+                                className={`p-3 rounded-lg flex items-center justify-between group transition-colors ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-black/5'}`}
+                              >
+                                <div className="flex items-center gap-3 overflow-hidden flex-1">
+                                  <FileText className="w-4 h-4 text-red-400 shrink-0" />
+                                  <div className="overflow-hidden flex-1">
+                                    {renamingDriveFileId === file.id ? (
+                                      <div className="flex items-center gap-1">
+                                        <input 
+                                          type="text"
+                                          value={newDriveFileName}
+                                          onChange={(e) => setNewDriveFileName(e.target.value)}
+                                          className="bg-black/20 text-xs p-1 rounded w-full focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                          autoFocus
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleRenameDriveFile(file.id);
+                                            if (e.key === 'Escape') setRenamingDriveFileId(null);
+                                          }}
+                                        />
+                                        <button onClick={() => handleRenameDriveFile(file.id)} className="p-1 text-emerald-500 hover:bg-emerald-500/10 rounded">
+                                          <Check className="w-3 h-3" />
+                                        </button>
+                                        <button onClick={() => setRenamingDriveFileId(null)} className="p-1 text-red-500 hover:bg-red-500/10 rounded">
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <p className="text-xs font-medium truncate">{file.name}</p>
+                                        <p className="text-[9px] opacity-40">
+                                          {new Date(file.modifiedTime).toLocaleString()} • {(file.size / 1024).toFixed(1)} KB
+                                        </p>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {renamingDriveFileId !== file.id && (
+                                    <>
+                                      <button 
+                                        onClick={() => {
+                                          setRenamingDriveFileId(file.id);
+                                          setNewDriveFileName(file.name.replace('.pdf', ''));
+                                        }}
+                                        className="p-1.5 rounded-md text-emerald-500 opacity-0 group-hover:opacity-100 hover:bg-emerald-500/10 transition-all"
+                                        title="Rename file"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <a 
+                                        href={file.webViewLink}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="p-1.5 rounded-md text-blue-500 opacity-0 group-hover:opacity-100 hover:bg-blue-500/10 transition-all"
+                                        title="View in Google Drive"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </a>
+                                      <button 
+                                        onClick={() => handleDeleteDriveFile(file.id)}
+                                        className="p-1.5 rounded-md text-red-500 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 transition-all"
+                                        title="Delete file"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="py-8 text-center opacity-40 text-[10px] uppercase tracking-widest">
+                            No PDF backups found
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {Object.keys(results).length > 0 && (
                     <div className={`mb-6 rounded-xl border overflow-hidden transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
                       <button 
@@ -3001,7 +3363,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             </div>
                           )}
                           
-                          {results[activeAudience].rejection_reasons && results[activeAudience].rejection_reasons!.length > 0 && (
+                          {Array.isArray(results[activeAudience].rejection_reasons) && results[activeAudience].rejection_reasons!.length > 0 && (
                             <div className="space-y-2">
                               <h4 className="font-bold text-red-500 flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
@@ -3015,7 +3377,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             </div>
                           )}
 
-                          {results[activeAudience].improvement_notes && results[activeAudience].improvement_notes!.length > 0 && (
+                          {Array.isArray(results[activeAudience].improvement_notes) && results[activeAudience].improvement_notes!.length > 0 && (
                             <div className="space-y-2">
                               <h4 className="font-bold text-emerald-500 flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
@@ -3039,7 +3401,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             </div>
                           )}
 
-                          {results[activeAudience].keyword_gap && results[activeAudience].keyword_gap!.length > 0 && (
+                          {Array.isArray(results[activeAudience].keyword_gap) && results[activeAudience].keyword_gap!.length > 0 && (
                             <div className="space-y-2">
                               <h4 className="font-bold text-yellow-500 flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-500"></span>
@@ -3229,13 +3591,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   {/* Resume Preview Pane */}
                   <div className={`flex-1 flex flex-col rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
                     <div className={`p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-4 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
-                      <div className="flex items-center justify-between w-full sm:w-auto gap-4">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full bg-red-500/50" />
-                          <div className="w-3 h-3 rounded-full bg-yellow-500/50" />
-                          <div className="w-3 h-3 rounded-full bg-green-500/50" />
-                        </div>
-                        <div className="h-4 w-[1px] bg-white/10 mx-2 hidden sm:block" />
+                      <div className="flex items-center justify-between w-full sm:w-auto gap-3">
                         <div className="flex items-center gap-1 bg-black/20 dark:bg-white/5 p-1 rounded-lg">
                           <button 
                             onClick={() => setPreviewMode('standard')}
@@ -3271,20 +3627,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             <span className="sm:hidden">OVERFLOW</span>
                           </div>
                         )}
-                        <div className={`flex items-center gap-1 px-2 py-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
                           <button 
                             onClick={() => {
                               setIsAutoZoom(false);
                               setZoom(z => Math.max(0.2, z - 0.1));
                             }}
-                            className="p-1 hover:bg-white/10 rounded transition-colors"
+                            className="p-0.5 hover:bg-white/10 rounded transition-colors"
                             title="Zoom Out"
                           >
-                            <span className="text-xs font-bold">-</span>
+                            <span className="text-[10px] font-bold">-</span>
                           </button>
                           <button
                             onClick={() => setIsAutoZoom(!isAutoZoom)}
-                            className={`text-[10px] font-mono w-12 text-center hover:text-emerald-500 transition-colors ${isAutoZoom ? 'text-emerald-500' : ''}`}
+                            className={`text-[9px] font-mono w-10 text-center hover:text-emerald-500 transition-colors ${isAutoZoom ? 'text-emerald-500' : ''}`}
                             title={isAutoZoom ? "Disable Auto-Zoom" : "Enable Auto-Zoom"}
                           >
                             {Math.round(zoom * 100)}%
@@ -3294,43 +3650,55 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               setIsAutoZoom(false);
                               setZoom(z => Math.min(2, z + 0.1));
                             }}
-                            className="p-1 hover:bg-white/10 rounded transition-colors"
+                            className="p-0.5 hover:bg-white/10 rounded transition-colors"
                             title="Zoom In"
                           >
-                            <span className="text-xs font-bold">+</span>
+                            <span className="text-[10px] font-bold">+</span>
                           </button>
                         </div>
                         <button 
                           onClick={copyResumeText}
-                          className="p-2 rounded-lg hover:bg-white/10 transition-colors text-xs font-bold uppercase tracking-wider flex items-center gap-2"
+                          className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
                           title="Copy text for selectable use"
                         >
-                          <Copy className="w-4 h-4" />
-                          <span className="hidden md:inline">Copy Text</span>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span className="hidden md:inline">Copy</span>
                         </button>
+                        <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 px-1.5 sm:px-2 md:px-2.5 py-1 sm:py-1.5 md:py-2 rounded-lg border transition-all cursor-pointer hover:opacity-80 ${
+                          versioningEnabled 
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
+                            : 'bg-gray-500/10 border-gray-500/20 text-gray-500'
+                        }`}
+                        onClick={() => setVersioningEnabled(!versioningEnabled)}
+                        title={versioningEnabled ? "Versioning is ON (Saves new files)" : "Versioning is OFF (Overwrites existing files)"}
+                        >
+                          <HardDrive className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" />
+                          <span className="text-[8px] sm:text-[9px] md:text-[10px] font-bold uppercase tracking-widest">
+                            Ver: {versioningEnabled ? 'ON' : 'OFF'}
+                          </span>
+                        </div>
                         <button 
-                          onClick={downloadDOCX}
-                          className="p-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-xs font-bold uppercase tracking-wider flex items-center gap-2"
+                          onClick={handleDownloadDOCX}
+                          className="p-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
                           title="Download as Word Document"
                         >
-                          <FileDown className="w-4 h-4" />
+                          <FileDown className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">DOCX</span>
                         </button>
                         <button 
                           onClick={downloadPDF}
                           disabled={isDownloading}
-                          className="p-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors text-xs font-bold uppercase tracking-wider flex items-center gap-2 disabled:opacity-50"
+                          className="p-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
                         >
                           {isDownloading ? (
                             <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              <span className="hidden sm:inline">Generating...</span>
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              <span className="hidden sm:inline">...</span>
                             </>
                           ) : (
                             <>
-                              <Download className="w-4 h-4" />
-                              <span className="hidden sm:inline">Download PDF</span>
-                              <span className="sm:hidden">PDF</span>
+                              <Download className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">PDF</span>
                             </>
                           )}
                         </button>

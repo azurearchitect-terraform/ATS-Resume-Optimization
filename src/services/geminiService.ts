@@ -239,7 +239,8 @@ export async function optimizeResume(
   linkedInPdfText?: string,
   jobUrl?: string,
   fastMode: boolean = false,
-  recruiterSimulationMode: boolean = false
+  recruiterSimulationMode: boolean = false,
+  customPrompt?: string
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
   const modelToUse = fastMode ? (routedConfig.engine === 'openai' ? 'gpt-5.4-mini' : 'gemini-3-flash-preview') : routedConfig.model;
@@ -250,6 +251,10 @@ export async function optimizeResume(
 ROLE:
 You are a senior executive resume strategist.
 ${recruiterSimulationMode ? 'You are acting as a strict Hiring Manager/Recruiter. Your goal is to critically evaluate the resume against the job description and provide specific, actionable rejection reasons.' : ''}
+
+${customPrompt ? `CUSTOM USER INSTRUCTIONS (PRIORITY):
+${customPrompt}
+` : ''}
 
 STRICT RULES:
 * Resume must fit within EXACTLY 2 A4 pages
@@ -278,9 +283,12 @@ The output must be layout-aware and ready for A4 PDF rendering.
 The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
 You must generate structured, layout-safe content that fits within these constraints.
 * ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
-* Calculate a REALISTIC and STRICT match score. Aim for a target score between 80-85% by strategically aligning the candidate's strengths with the JD requirements without exaggeration.
+* HUMAN-LIKE, REALISTIC TONE: The resume MUST sound like it was written by a human professional, not an AI. STRICTLY AVOID common AI buzzwords and clichés such as "spearheaded", "synergized", "testament to", "delved into", "unwavering", "pivotal", "catalyst", "fostered", "orchestrated", "navigated", "seamlessly", "elevated", "championed", or "transformative". Use plain, direct, and professional business language.
+* PROFESSIONAL EXPERTISE: Ensure the tone reflects deep expertise and seniority. Use sophisticated but clear vocabulary. Do not oversimplify the candidate's achievements; instead, articulate them with precision and impact.
+* Calculate a REALISTIC and STRICT match score based on how well the candidate's strengths align with the JD requirements. Do not artificially cap the score; if it is a 95% match, score it 95%.
 ${isLeadershipRole ? `* FOCUS ON LEADERSHIP & STRATEGY: Since this is a ${targetRole} role, emphasize strategic vision, team management, stakeholder engagement, budget oversight, and business impact. De-emphasize hands-on technical tasks in favor of high-level outcomes.` : ''}
 ${isTechnicalRole && !isLeadershipRole ? `* FOCUS ON TECHNICAL DEPTH: Highlight specific tools, architectures, and technical problem-solving. Ensure the resume demonstrates deep expertise in the required tech stack.` : ''}
+* TITLE PRESERVATION: STRICTLY preserve the exact role title "Officer IT Cum Logistics" if provided. Do NOT change, rephrase, or correct it, even if it seems like a typo.
 * CACHING MECHANISM (PRESERVATION):
   - HEADER: Preserve the personal information exactly as provided.
   - EDUCATION: Do NOT re-optimize or change the education section if it is already well-formatted.
@@ -387,6 +395,7 @@ Return the result in the following JSON format: { "personal_info": { "name": str
         }
 
         parsed.skills = formattedSkills;
+        parsed._engine = routedConfig.engine;
 
         if (data.usage) {
           parsed._usage = data.usage;
@@ -614,5 +623,78 @@ export async function generateCoverLetter(
   } catch (error) {
     console.error("Error generating cover letter:", error);
     return "";
+  }
+}
+
+export async function analyzeLinkedInProfile(
+  resumeText: string,
+  linkedInText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('linkedin_analysis', config);
+  const prompt = `
+      You are an expert LinkedIn profile optimizer and career coach.
+      Analyze the following candidate's resume and their LinkedIn profile text.
+      Provide a comprehensive review of the LinkedIn profile, highlighting strengths, areas for improvement, and specific suggestions to optimize it for better visibility and impact.
+      
+      RESUME: ${resumeText}
+      LINKEDIN PROFILE: ${linkedInText}
+      
+      Return the review as a structured markdown document.
+    `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return data.result || "";
+  } catch (error) {
+    console.error("Error analyzing LinkedIn profile:", error);
+    throw error;
+  }
+}
+
+export async function optimizeHeadline(
+  currentHeadline: string,
+  resumeSummary: string,
+  keySkills: string[],
+  targetRole: string,
+  config: RouterConfig
+): Promise<{ headline: string; keywords_used: string[] }> {
+  const routedConfig = routeTask('optimize_headline', config);
+  const prompt = `
+    You are a LinkedIn headline optimization expert for IT and Cloud professionals.
+
+    Input:
+    - Current Headline: ${currentHeadline}
+    - Resume Summary: ${resumeSummary}
+    - Key Skills: ${JSON.stringify(keySkills)}
+    - Target Role: ${targetRole}
+
+    Tasks:
+    1. Rewrite the headline to be:
+       - Keyword-rich (ATS and recruiter friendly)
+       - Clear and impactful
+       - Aligned with target role
+    2. Include important keywords like Azure, Cloud, Infrastructure, Migration, etc. if relevant
+    3. Keep it under 220 characters
+
+    Constraints:
+    - No buzzword stuffing
+    - No fake claims
+    - Must reflect real experience
+
+    Output (STRICT JSON):
+    {
+      "headline": "...",
+      "keywords_used": ["...", "..."]
+    }
+  `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    return JSON.parse(resultText || '{"headline": "", "keywords_used": []}');
+  } catch (error) {
+    console.error("Error optimizing headline:", error);
+    throw error;
   }
 }
