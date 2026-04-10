@@ -42,6 +42,7 @@ export interface OptimizationResult {
     candidatesTokenCount: number;
     totalTokenCount: number;
   };
+  _engine?: string;
 }
 
 export type EngineType = 'gemini' | 'openai';
@@ -257,6 +258,7 @@ ${customPrompt}
 ` : ''}
 
 STRICT RULES:
+* TITLE PRESERVATION: STRICTLY preserve ALL exact role titles and job titles exactly as they appear in the input resume. Do NOT change, rephrase, correct, or "fix" them (e.g., do not change "Officer IT cum Logistics" to "Office IT cum Logistics"), even if they seem like typos. This is a non-negotiable requirement.
 * Resume must fit within EXACTLY 2 A4 pages
 * Do NOT exceed 2 pages
 * Do NOT leave large empty spaces
@@ -288,7 +290,6 @@ You must generate structured, layout-safe content that fits within these constra
 * Calculate a REALISTIC and STRICT match score based on how well the candidate's strengths align with the JD requirements. Do not artificially cap the score; if it is a 95% match, score it 95%.
 ${isLeadershipRole ? `* FOCUS ON LEADERSHIP & STRATEGY: Since this is a ${targetRole} role, emphasize strategic vision, team management, stakeholder engagement, budget oversight, and business impact. De-emphasize hands-on technical tasks in favor of high-level outcomes.` : ''}
 ${isTechnicalRole && !isLeadershipRole ? `* FOCUS ON TECHNICAL DEPTH: Highlight specific tools, architectures, and technical problem-solving. Ensure the resume demonstrates deep expertise in the required tech stack.` : ''}
-* TITLE PRESERVATION: STRICTLY preserve the exact role title "Officer IT Cum Logistics" if provided. Do NOT change, rephrase, or correct it, even if it seems like a typo.
 * CACHING MECHANISM (PRESERVATION):
   - HEADER: Preserve the personal information exactly as provided.
   - EDUCATION: Do NOT re-optimize or change the education section if it is already well-formatted.
@@ -306,11 +307,7 @@ CRITICAL ISSUES TO RESOLVE:
 * If a degree is in progress, reframe as: "Continuing Education" or "Degree in Progress".
 * Maintain credibility and professionalism.
 
-3. TITLE ALIGNMENT:
-* Avoid over-titling. Align titles realistically with responsibilities.
-* Maintain senior tone without exaggeration.
-
-4. VISUAL STRUCTURE FOR UI:
+3. VISUAL STRUCTURE FOR UI:
 * Do NOT include lines, separators, or styling text.
 * Skills must be grouped logically for grid display into 4 categories.
 ${isLeadershipRole ? `* Suggested skill categories for this role: Strategic Leadership, Management, Operations, Technical Proficiency.` : `* Suggested skill categories for this role: Core Technical, Tools & Frameworks, Process & Methodology, Soft Skills.`}
@@ -400,7 +397,26 @@ Return the result in the following JSON format: { "personal_info": { "name": str
         if (data.usage) {
           parsed._usage = data.usage;
         }
-        return parsed;
+
+        // FAIL-SAFE: Ensure "Officer IT cum Logistics" is preserved and not changed to "Office IT cum Logistics"
+        const fixTitle = (obj: any): any => {
+          if (typeof obj === 'string') {
+            return obj.replace(/Office IT [Cc]um Logistics/g, 'Officer IT cum Logistics');
+          }
+          if (Array.isArray(obj)) {
+            return obj.map(fixTitle);
+          }
+          if (obj !== null && typeof obj === 'object') {
+            const newObj: any = {};
+            for (const key in obj) {
+              newObj[key] = fixTitle(obj[key]);
+            }
+            return newObj;
+          }
+          return obj;
+        };
+
+        return fixTitle(parsed);
       } catch (e) {
         console.error(`Error parsing ${routedConfig.engine} response:`, e, "Raw text:", resultText);
         throw new Error(`JSON_PARSING_ERROR: The ${routedConfig.engine} engine returned an invalid response format.`);

@@ -54,6 +54,7 @@ export const improveTextWithAI = async (
       3. Keep it concise and professional
       4. Maintain bullet formatting
       5. Ensure it fits within 1–2 pages
+      6. TITLE PRESERVATION (CRITICAL): STRICTLY preserve ALL exact role titles and job titles exactly as they appear in the original text. Do NOT change, rephrase, correct, or "fix" them (e.g., do not change "Officer IT cum Logistics" to "Office IT cum Logistics"), even if they seem like typos. This is a non-negotiable requirement.
       
       Output:
       - Clean structured resume
@@ -71,7 +72,8 @@ export const improveTextWithAI = async (
       contents: [{ parts: [{ text: prompt }] }],
     });
 
-    return response.text?.trim() || text;
+    const result = response.text?.trim() || text;
+    return result.replace(/Office IT [Cc]um Logistics/g, 'Officer IT cum Logistics');
   } catch (error) {
     console.error("AI Improvement Error:", error);
     return text;
@@ -96,6 +98,7 @@ export const rewriteSectionWithAI = async (
       3. Keep it concise and professional
       4. Maintain bullet formatting
       5. Ensure it fits within 1–2 pages
+      6. TITLE PRESERVATION (CRITICAL): STRICTLY preserve ALL exact role titles and job titles exactly as they appear in the original text. Do NOT change, rephrase, correct, or "fix" them (e.g., do not change "Officer IT cum Logistics" to "Office IT cum Logistics"), even if they seem like typos. This is a non-negotiable requirement.
       
       Output:
       - Clean structured resume
@@ -118,7 +121,29 @@ export const rewriteSectionWithAI = async (
     });
 
     const result = response.text?.trim();
-    return result ? JSON.parse(result) : content;
+    if (!result) return content;
+
+    const parsed = JSON.parse(result);
+
+    // FAIL-SAFE: Ensure "Officer IT cum Logistics" is preserved
+    const fixTitle = (obj: any): any => {
+      if (typeof obj === 'string') {
+        return obj.replace(/Office IT [Cc]um Logistics/g, 'Officer IT cum Logistics');
+      }
+      if (Array.isArray(obj)) {
+        return obj.map(fixTitle);
+      }
+      if (obj !== null && typeof obj === 'object') {
+        const newObj: any = {};
+        for (const key in obj) {
+          newObj[key] = fixTitle(obj[key]);
+        }
+        return newObj;
+      }
+      return obj;
+    };
+
+    return fixTitle(parsed);
   } catch (error) {
     console.error("AI Section Rewrite Error:", error);
     return content;

@@ -60,6 +60,31 @@
         }
       },
       "required": ["userId", "timestamp", "name", "data"]
+    },
+    "TokenUsage": {
+      "title": "TokenUsage",
+      "description": "Stores daily token usage for a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "gemini": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "number" },
+            "output": { "type": "number" }
+          }
+        },
+        "openai": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "number" },
+            "output": { "type": "number" }
+          }
+        },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["userId", "date", "gemini", "openai"]
     }
   },
   "firestore": {
@@ -74,6 +99,12 @@
         "$ref": "#/entities/ResumeVersion"
       },
       "description": "Collection of saved resume versions for a user."
+    },
+    "/users/{userId}/tokenUsage/{dateId}": {
+      "schema": {
+        "$ref": "#/entities/TokenUsage"
+      },
+      "description": "Collection of daily token usage records."
     }
   }
 }

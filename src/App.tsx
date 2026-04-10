@@ -23,6 +23,7 @@ import {
   Upload,
   Users,
   Eye,
+  EyeOff,
   FileDown,
   Type,
   AlignLeft,
@@ -61,7 +62,7 @@ import { saveAs } from 'file-saver';
 
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy, increment } from 'firebase/firestore';
 import { handleFirestoreError } from './lib/firebaseUtils';
 import { OperationType } from './types';
 
@@ -596,9 +597,20 @@ export default function App() {
     return { ...DEFAULT_STYLE, ...style };
   };
 
-  const [configWidth, setConfigWidth] = useState(40); // percentage
+  const [configWidth, setConfigWidth] = useState(() => {
+    if (typeof window !== 'undefined') {
+      if (window.innerWidth >= 1600) return 30;
+      if (window.innerWidth >= 1200) return 35;
+      return 40;
+    }
+    return 40;
+  }); // percentage
   const [isResizingWidth, setIsResizingWidth] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isAutoZoom, setIsAutoZoom] = useState(true);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'standard' | 'simplified'>('standard');
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const saveResumeVersion = async (customName?: string) => {
     const savedHistory = JSON.parse(localStorage.getItem('resumeHistory') || '[]');
@@ -689,10 +701,6 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const resetLayout = () => {
-    setConfigWidth(40);
-  };
-
   const [error, setError] = useState<string | null>(null);
   const [showModeInfo, setShowModeInfo] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -700,28 +708,138 @@ export default function App() {
   const [optimizationProgress, setOptimizationProgress] = useState(0);
   const [optimizationStatus, setOptimizationStatus] = useState('');
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [tokenUsage, setTokenUsage] = useState(() => {
-    const saved = localStorage.getItem('tokenUsage');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.gemini && parsed.openai) {
-        return parsed;
-      }
-    }
-    return {
-      gemini: { input: 0, output: 0 },
-      openai: { input: 0, output: 0 }
-    };
+  const [tokenUsage, setTokenUsage] = useState({
+    gemini: { input: 0, output: 0 },
+    openai: { input: 0, output: 0 }
   });
 
+  const getTodayStr = () => new Date().toISOString().split('T')[0];
+
+  // Fetch token usage from Firestore on login/date change
   useEffect(() => {
-    localStorage.setItem('tokenUsage', JSON.stringify(tokenUsage));
-  }, [tokenUsage]);
+    if (!user) {
+      setTokenUsage({
+        gemini: { input: 0, output: 0 },
+        openai: { input: 0, output: 0 }
+      });
+      return;
+    }
+
+    const fetchUsage = async () => {
+      const today = getTodayStr();
+      const usageRef = doc(db, 'users', user.uid, 'tokenUsage', today);
+      try {
+        const docSnap = await getDoc(usageRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setTokenUsage({
+            gemini: data.gemini || { input: 0, output: 0 },
+            openai: data.openai || { input: 0, output: 0 }
+          });
+        } else {
+          setTokenUsage({
+            gemini: { input: 0, output: 0 },
+            openai: { input: 0, output: 0 }
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching token usage:", err);
+      }
+    };
+
+    fetchUsage();
+
+    // Set up a timer to reset at midnight
+    const now = new Date();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const msUntilMidnight = tomorrow.getTime() - now.getTime();
+    
+    const timer = setTimeout(() => {
+      fetchUsage();
+    }, msUntilMidnight + 1000);
+
+    return () => clearTimeout(timer);
+  }, [user]);
+
+  // Sync token usage to Firestore when it changes
+  const syncTokenUsage = async (engine: 'gemini' | 'openai', input: number, output: number) => {
+    if (!user) return;
+    const today = getTodayStr();
+    const usageRef = doc(db, 'users', user.uid, 'tokenUsage', today);
+    try {
+      await setDoc(usageRef, {
+        userId: user.uid,
+        date: today,
+        [engine]: {
+          input: increment(input),
+          output: increment(output)
+        },
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      console.error("Error syncing token usage:", err);
+    }
+  };
+
+  const generateTokenReport = async () => {
+    if (!user) return;
+    setIsDownloading(true);
+    try {
+      const usageCol = collection(db, 'users', user.uid, 'tokenUsage');
+      const q = query(usageCol, orderBy('date', 'desc'));
+      const querySnapshot = await getDocs(q);
+      
+      let csv = "Date,Gemini Input,Gemini Output,OpenAI Input,OpenAI Output\n";
+      querySnapshot.forEach((doc) => {
+        const d = doc.data();
+        csv += `${d.date},${d.gemini.input},${d.gemini.output},${d.openai.input},${d.openai.output}\n`;
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const fileName = `TokenUsageReport_${user.uid}_${getTodayStr()}.csv`;
+      
+      // Save locally
+      saveAs(blob, fileName);
+
+      // Save to Google Drive if connected
+      if (driveAccessToken || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+          const base64data = (reader.result as string).split(',')[1];
+          try {
+            const response = await fetch('/api/save-to-drive', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                pdfData: base64data,
+                fileName: fileName,
+                versioningEnabled: false,
+                accessToken: driveAccessToken
+              })
+            });
+            const data = await response.json();
+            if (data.success) {
+              showToast("Report saved to Google Drive", "success");
+            }
+          } catch (err) {
+            console.error("Error saving report to Drive:", err);
+          }
+        };
+      }
+      
+      showToast("Token usage report generated", "success");
+    } catch (err) {
+      console.error("Error generating report:", err);
+      showToast("Failed to generate report", "error");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
   
   const resumePreviewRef = useRef<HTMLDivElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
-  const [isAutoZoom, setIsAutoZoom] = useState(true);
   const [customFonts, setCustomFonts] = useState<{name: string, url: string, format: string}[]>([]);
 
   // Autosave to Drive logic
@@ -859,35 +977,69 @@ export default function App() {
     
     let animationFrameId: number;
     
+    const calculateZoom = () => {
+      if (!previewContainerRef.current) return;
+      
+      const container = previewContainerRef.current;
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      
+      if (containerWidth === 0 || containerHeight === 0) return;
+
+      const resumeElement = document.getElementById('resume-container');
+      if (!resumeElement) return;
+
+      const currentZoom = zoom || 1;
+      const contentWidth = resumeElement.offsetWidth / currentZoom;
+      const contentHeight = resumeElement.scrollHeight / currentZoom;
+      
+      if (contentWidth === 0 || contentHeight === 0) return;
+
+      const padding = window.innerWidth < 768 ? 8 : 32; 
+      const availableWidth = containerWidth - padding;
+      const availableHeight = containerHeight - padding;
+      
+      const scaleX = availableWidth / contentWidth;
+      const scaleY = availableHeight / contentHeight;
+      
+      let newZoom;
+      const isMobile = window.innerWidth < 768;
+
+      if (isMobile) {
+        // On mobile, fit width but don't go too small
+        newZoom = Math.max(0.4, Math.min(scaleX, 1.0));
+      } else {
+        // On desktop/laptop, fit both dimensions to ensure it's fully visible in the pane
+        newZoom = Math.max(0.2, Math.min(scaleX, scaleY, 1.1));
+      }
+      
+      if (Math.abs(newZoom - currentZoom) > 0.01) {
+        setZoom(newZoom);
+      }
+    };
+
     const observer = new ResizeObserver((entries) => {
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
       
       animationFrameId = requestAnimationFrame(() => {
-        for (let entry of entries) {
-          const containerWidth = entry.contentRect.width;
-          const targetWidth = 794; // A4 width in px
-          const padding = 64; // 32px padding on each side
-          const availableWidth = containerWidth - padding;
-          
-          if (availableWidth < targetWidth) {
-            setZoom(availableWidth / targetWidth);
-          } else {
-            setZoom(Math.min(1.5, availableWidth / targetWidth));
-          }
-        }
+        calculateZoom();
       });
     });
 
     observer.observe(previewContainerRef.current);
+    
+    // Initial calculation
+    calculateZoom();
+
     return () => {
       observer.disconnect();
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [activeAudience, isAutoZoom]); // Re-run when audience or auto-zoom changes
+  }, [activeAudience, isAutoZoom, results, data, previewMode]); // Re-run when content or mode changes
 
   useEffect(() => {
     console.log("isOptimizing changed:", isOptimizing);
@@ -1206,13 +1358,18 @@ export default function App() {
         // Update token usage
         if (data._usage && data._engine) {
           const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
+          const inputDelta = data._usage!.promptTokenCount || 0;
+          const outputDelta = data._usage!.candidatesTokenCount || 0;
+          
           setTokenUsage(prev => ({
             ...prev,
             [engine]: {
-              input: (prev[engine].input || 0) + (data._usage!.promptTokenCount || 0),
-              output: (prev[engine].output || 0) + (data._usage!.candidatesTokenCount || 0)
+              input: (prev[engine].input || 0) + inputDelta,
+              output: (prev[engine].output || 0) + outputDelta
             }
           }));
+          
+          syncTokenUsage(engine, inputDelta, outputDelta);
         }
 
         // Update results
@@ -1325,6 +1482,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     e.preventDefault();
   };
 
+  const resetLayout = () => {
+    if (window.innerWidth >= 1600) setConfigWidth(30);
+    else if (window.innerWidth >= 1200) setConfigWidth(35);
+    else setConfigWidth(40);
+  };
+
   useEffect(() => {
     let animationFrameId: number;
 
@@ -1340,7 +1503,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           const rect = containerRef.current!.getBoundingClientRect();
           const newWidthPx = e.clientX - rect.left;
           const newWidthPercent = (newWidthPx / rect.width) * 100;
-          setConfigWidth(Math.max(20, Math.min(60, newWidthPercent)));
+          // SaaS constraints: 25% to 55%
+          setConfigWidth(Math.max(25, Math.min(55, newWidthPercent)));
         }
       });
     };
@@ -1366,9 +1530,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
       document.body.style.userSelect = '';
     };
   }, [isResizingWidth]);
-
-  const [previewMode, setPreviewMode] = useState<'standard' | 'simplified'>('standard');
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const downloadPDF = async () => {
     const element = document.getElementById('resume-container');
@@ -1536,9 +1697,33 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     setResumeText('');
     setJobDescription('');
     setTargetRole('');
+    setCompanyName('');
+    setJobUrl('');
     setResults({});
     setActiveAudience(null);
     setFileName(null);
+    setSuitabilityResult(null);
+    setLinkedInUrl('');
+    setLinkedInPdfText('');
+    setLinkedInFileName('');
+    setCustomPrompt('');
+    setData({
+      personal_info: { 
+        name: '',
+        email: '',
+        phone: '',
+        location: '',
+        summary: '',
+        linkedin: '',
+        linkedinText: ''
+      },
+      experience: [],
+      skills: [],
+      education: [],
+      projects: [],
+      certifications: []
+    });
+    showToast("All inputs cleared.", "info");
   };
 
   const renderSimplifiedResume = () => {
@@ -1914,7 +2099,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   };
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 overflow-x-hidden ${isDarkMode ? 'bg-[#0A0A0A] text-white' : 'bg-white text-[#1A1A1A]'} font-sans selection:bg-emerald-500/30`}>
+    <div className={`h-screen flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'} font-sans selection:bg-emerald-500/30`}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       {confirmDialog && (
         <ConfirmDialog 
@@ -1925,8 +2110,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         />
       )}
       {/* Header */}
-      <header className={`border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-[#0A0A0A]/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
-        <div className="w-full px-4 md:px-8 h-16 flex items-center justify-between">
+      <header className={`shrink-0 border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-neutral-950/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
+        <div className="max-w-[1600px] mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isDarkMode ? 'bg-emerald-500' : 'bg-black'}`}>
               <Cpu className={`w-5 h-5 ${isDarkMode ? 'text-black' : 'text-emerald-400'}`} />
@@ -1934,6 +2119,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <span className="font-bold text-xl tracking-tight">ATS.OPTIMIZER</span>
           </div>
           <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsFocusMode(!isFocusMode)}
+              className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${isFocusMode ? 'bg-emerald-500/20' : ''}`}
+              title={isFocusMode ? "Exit Focus Mode" : "Focus Mode"}
+            >
+              {isFocusMode ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
             <button 
               onClick={resetLayout}
               className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`}
@@ -1952,28 +2144,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         </div>
       </header>
 
-      <div className="w-full px-4 md:px-8 py-4 md:py-8">
-        <div className="relative w-full">
-          <div className="flex flex-row relative w-full">
-            <div 
-              ref={containerRef}
-              className="flex flex-col md:flex-row gap-4 md:gap-0 relative w-full flex-1"
-              style={{ 
-                height: isMobile ? 'auto' : 'calc(100vh - 128px)'
-              }}
-            >
-          {/* Configuration Pane */}
-          <div 
-            ref={leftPanelRef}
-            className={`w-full md:flex-shrink-0 md:h-full md:overflow-y-auto custom-scrollbar rounded-2xl border ${isDarkMode ? 'bg-[#0A0A0A] border-white/10' : 'bg-white border-black/5'} shadow-xl`}
-            style={{ 
-              width: isMobile ? '100%' : `${configWidth}%`,
-              minWidth: isMobile ? '100%' : '320px',
-              maxWidth: isMobile ? '100%' : '800px'
-            }}
-          >
-            <div className={`sticky top-0 bg-white dark:bg-[#0A0A0A] z-20 p-2 md:p-4 border-b border-black/5 dark:border-white/10 ${!isDarkMode ? '!bg-white' : ''}`}>
-                    <div className="flex gap-1 p-1 bg-gray-200 dark:bg-white/5 rounded-lg">
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden max-w-[1600px] w-full mx-auto relative" ref={containerRef}>
+        {/* Configuration Pane */}
+        <div 
+          ref={leftPanelRef}
+          className={`flex flex-col h-full border-r relative ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'} transition-all duration-200 ease-in-out ${isFocusMode ? 'w-0 opacity-0 pointer-events-none border-none' : ''}`}
+          style={{ 
+            width: isMobile ? '100%' : (isFocusMode ? '0' : `${configWidth}%`),
+            minWidth: isMobile ? '100%' : (isFocusMode ? '0' : '320px'),
+            maxWidth: isMobile ? '100%' : (isFocusMode ? '0' : '800px')
+          }}
+        >
+          <div className={`sticky top-0 z-20 p-2 md:p-4 border-b ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'}`}>
+            <div className="flex gap-1 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
                       {(['config', 'profile', 'style', 'tools', 'guide'] as const).map((tab) => (
                         <button
                           key={tab}
@@ -1988,10 +2172,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         </button>
                       ))}
                     </div>
-            </div>
-            
-            <div className="p-2 md:p-4 space-y-6">
-              {activeTab === 'config' && (
+          </div>
+          
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 md:p-4 space-y-6">
+            {activeTab === 'config' && (
                 <div className="space-y-6">
                   <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
                     <div className="flex items-center justify-between mb-6">
@@ -2599,7 +2783,17 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <div className="flex justify-between items-center mb-3">
                                 <div className="flex items-center gap-2">
                                   <Cpu className="w-3 h-3 opacity-50" />
-                                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
+                                  <div className="flex items-center justify-between mb-4">
+                                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
+                                    <button 
+                                      onClick={generateTokenReport}
+                                      disabled={isDownloading}
+                                      className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 transition-colors"
+                                    >
+                                      <Download className="w-3 h-3" />
+                                      Generate Report
+                                    </button>
+                                  </div>
                                 </div>
                                 <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{selectedEngine === 'production' ? 'Hybrid Mode' : selectedEngine}</span>
                               </div>
@@ -3426,15 +3620,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           </div>
 
         {/* Vertical Resize Handle (Left/Right) */}
-          <div 
-            onMouseDown={handleMouseDownDivider}
-            className="hidden md:flex w-8 cursor-col-resize justify-center items-center group z-10 shrink-0"
-          >
-            <div className={`w-1 h-16 rounded-full transition-colors ${isResizingWidth ? 'bg-emerald-500' : 'bg-black/20 dark:bg-white/20 group-hover:bg-emerald-500/50'}`} />
-          </div>
+          {!isFocusMode && (
+            <div 
+              onMouseDown={handleMouseDownDivider}
+              onDoubleClick={resetLayout}
+              className={`hidden md:flex w-1.5 cursor-col-resize justify-center items-center group z-30 transition-colors ${isResizingWidth ? 'bg-emerald-500' : 'hover:bg-emerald-500/30'}`}
+            >
+              <div className={`w-0.5 h-12 rounded-full transition-colors ${isResizingWidth ? 'bg-white' : 'bg-neutral-300 dark:bg-neutral-700 group-hover:bg-emerald-500'}`} />
+            </div>
+          )}
 
           {/* Result Section */}
-          <div className="flex-1 min-w-0 flex flex-col h-full">
+          <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-neutral-100 dark:bg-neutral-900">
             <AnimatePresence mode="wait">
               {isOptimizing && Object.keys(results).length === 0 ? (
                 <motion.div 
@@ -3509,7 +3706,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 1.05 }}
-                  className={`h-full min-h-[500px] flex flex-col items-center justify-center text-center p-8 md:p-16 rounded-3xl border border-dashed relative overflow-hidden ${
+                  className={`h-full min-h-[500px] flex flex-col items-center justify-start text-center p-8 md:p-16 rounded-3xl border border-dashed relative overflow-y-auto custom-scrollbar ${
                     isDarkMode ? 'bg-[#0a0a0a] border-white/5' : 'bg-white border-black/10'
                   }`}
                 >
@@ -3519,63 +3716,63 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px]" />
                   </div>
 
-                  <div className="w-full max-w-3xl space-y-12 relative z-10">
-                    <div className="space-y-6">
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold uppercase tracking-widest border border-emerald-500/20">
+                  <div className="w-full max-w-4xl space-y-6 md:space-y-10 relative z-10 py-12 my-auto">
+                    <div className="space-y-4 md:space-y-6">
+                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] md:text-xs font-bold uppercase tracking-widest border border-emerald-500/20">
                         <Zap className="w-3 h-3" />
                         AI-Powered Optimization
                       </div>
-                      <h3 className={`text-4xl md:text-6xl font-black tracking-tight leading-[1.1] ${isDarkMode ? 'text-white' : 'text-black'}`}>
+                      <h3 className={`text-2xl sm:text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-black tracking-tight leading-[1.1] ${isDarkMode ? 'text-white' : 'text-black'}`}>
                         Transform Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">Professional Identity</span>
                       </h3>
-                      <p className="opacity-60 text-lg md:text-xl max-w-2xl mx-auto leading-relaxed font-medium">
+                      <p className="opacity-60 text-sm sm:text-base md:text-lg lg:text-xl max-w-2xl mx-auto leading-relaxed font-medium px-4">
                         Upload your resume and target a specific role. Our AI will craft a high-impact version tailored for ATS success.
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                      <div className="space-y-4 group">
-                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
-                          <Upload className="w-8 h-8 text-emerald-500" />
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
+                      <div className="space-y-2 md:space-y-4 group">
+                        <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
+                          <Upload className="w-6 h-6 md:w-8 md:h-8 text-emerald-500" />
                         </div>
                         <div className="space-y-1">
-                          <h4 className="font-bold text-sm uppercase tracking-widest">1. Input</h4>
-                          <p className="text-xs opacity-40">Load your current experience</p>
+                          <h4 className="font-bold text-[10px] md:text-sm uppercase tracking-widest">1. Input</h4>
+                          <p className="text-[9px] md:text-xs opacity-40">Load your current experience</p>
                         </div>
                       </div>
-                      <div className="space-y-4 group">
-                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:-rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
-                          <Target className="w-8 h-8 text-blue-500" />
+                      <div className="space-y-2 md:space-y-4 group">
+                        <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:-rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
+                          <Target className="w-6 h-6 md:w-8 md:h-8 text-blue-500" />
                         </div>
                         <div className="space-y-1">
-                          <h4 className="font-bold text-sm uppercase tracking-widest">2. Target</h4>
-                          <p className="text-xs opacity-40">Define your dream role</p>
+                          <h4 className="font-bold text-[10px] md:text-sm uppercase tracking-widest">2. Target</h4>
+                          <p className="text-[9px] md:text-xs opacity-40">Define your dream role</p>
                         </div>
                       </div>
-                      <div className="space-y-4 group">
-                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
-                          <Zap className="w-8 h-8 text-yellow-500" />
+                      <div className="space-y-2 md:space-y-4 group">
+                        <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
+                          <Zap className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
                         </div>
                         <div className="space-y-1">
-                          <h4 className="font-bold text-sm uppercase tracking-widest">3. Optimize</h4>
-                          <p className="text-xs opacity-40">Get your ATS-ready resume</p>
+                          <h4 className="font-bold text-[10px] md:text-sm uppercase tracking-widest">3. Optimize</h4>
+                          <p className="text-[9px] md:text-xs opacity-40">Get your ATS-ready resume</p>
                         </div>
                       </div>
                     </div>
 
-                    <div className="pt-8">
-                      <div className="flex items-center justify-center gap-8 opacity-30 grayscale hover:grayscale-0 transition-all duration-500">
+                    <div className="pt-4 md:pt-8">
+                      <div className="flex flex-wrap items-center justify-center gap-4 md:gap-8 opacity-30 grayscale hover:grayscale-0 transition-all duration-500">
                         <div className="flex items-center gap-2">
-                          <Cpu className="w-5 h-5" />
-                          <span className="text-xs font-bold uppercase tracking-widest">Hybrid Engine</span>
+                          <Cpu className="w-4 h-4 md:w-5 md:h-5" />
+                          <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest">Hybrid Engine</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Layout className="w-5 h-5" />
-                          <span className="text-xs font-bold uppercase tracking-widest">Smart Layout</span>
+                          <Layout className="w-4 h-4 md:w-5 md:h-5" />
+                          <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest">Smart Layout</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <BarChart3 className="w-5 h-5" />
-                          <span className="text-xs font-bold uppercase tracking-widest">ATS Scoring</span>
+                          <BarChart3 className="w-4 h-4 md:w-5 md:h-5" />
+                          <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest">ATS Scoring</span>
                         </div>
                       </div>
                     </div>
@@ -3590,124 +3787,134 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                 >
                   {/* Resume Preview Pane */}
                   <div className={`flex-1 flex flex-col rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5 shadow-xl'}`}>
-                    <div className={`p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-4 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
-                      <div className="flex items-center justify-between w-full sm:w-auto gap-3">
-                        <div className="flex items-center gap-1 bg-black/20 dark:bg-white/5 p-1 rounded-lg">
+                    <div className={`p-2 md:p-4 border-b flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 md:gap-4 ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
+                      <div className="flex flex-row items-center gap-2 md:gap-3">
+                        <div className="flex flex-row gap-1 bg-black/20 dark:bg-white/5 p-1 rounded-lg">
                           <button 
                             onClick={() => setPreviewMode('standard')}
-                            className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest rounded-md transition-all ${
+                            className={`px-2 md:px-3 py-1 md:py-1.5 text-[8px] md:text-[9px] font-bold uppercase tracking-widest rounded-md transition-all flex items-center justify-center gap-1 md:gap-2 ${
                               previewMode === 'standard' 
                                 ? 'bg-emerald-500 text-white shadow-sm' 
                                 : 'opacity-40 hover:opacity-100'
                             }`}
                           >
-                            Standard
+                            <Layout className="w-2.5 h-2.5 md:w-3 md:h-3" />
+                            <span className="hidden xs:inline">Standard</span>
                           </button>
                           <button 
                             onClick={() => setPreviewMode('simplified')}
-                            className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest rounded-md transition-all ${
+                            className={`px-2 md:px-3 py-1 md:py-1.5 text-[8px] md:text-[9px] font-bold uppercase tracking-widest rounded-md transition-all flex items-center justify-center gap-1 md:gap-2 ${
                               previewMode === 'simplified' 
                                 ? 'bg-emerald-500 text-white shadow-sm' 
                                 : 'opacity-40 hover:opacity-100'
                             }`}
                           >
-                            Workday
+                            <AlignLeft className="w-2.5 h-2.5 md:w-3 md:h-3" />
+                            <span className="hidden xs:inline">Workday</span>
                           </button>
                         </div>
-                        <div className="h-4 w-[1px] bg-white/10 mx-2 hidden sm:block" />
-                        <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">
-                          Editing: <span className="text-emerald-400">{activeSection || 'Select a section'}</span>
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between w-full sm:w-auto gap-2">
-                        {overflow.isOverflowing && (
-                          <div className="flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-500 text-[10px] font-bold animate-pulse">
-                            <AlertCircle className="w-3 h-3" />
-                            <span className="hidden sm:inline">OVERFLOW DETECTED</span>
-                            <span className="sm:hidden">OVERFLOW</span>
-                          </div>
-                        )}
-                        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
-                          <button 
-                            onClick={() => {
-                              setIsAutoZoom(false);
-                              setZoom(z => Math.max(0.2, z - 0.1));
-                            }}
-                            className="p-0.5 hover:bg-white/10 rounded transition-colors"
-                            title="Zoom Out"
-                          >
-                            <span className="text-[10px] font-bold">-</span>
-                          </button>
-                          <button
-                            onClick={() => setIsAutoZoom(!isAutoZoom)}
-                            className={`text-[9px] font-mono w-10 text-center hover:text-emerald-500 transition-colors ${isAutoZoom ? 'text-emerald-500' : ''}`}
-                            title={isAutoZoom ? "Disable Auto-Zoom" : "Enable Auto-Zoom"}
-                          >
-                            {Math.round(zoom * 100)}%
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setIsAutoZoom(false);
-                              setZoom(z => Math.min(2, z + 0.1));
-                            }}
-                            className="p-0.5 hover:bg-white/10 rounded transition-colors"
-                            title="Zoom In"
-                          >
-                            <span className="text-[10px] font-bold">+</span>
-                          </button>
-                        </div>
-                        <button 
-                          onClick={copyResumeText}
-                          className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
-                          title="Copy text for selectable use"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          <span className="hidden md:inline">Copy</span>
-                        </button>
-                        <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 px-1.5 sm:px-2 md:px-2.5 py-1 sm:py-1.5 md:py-2 rounded-lg border transition-all cursor-pointer hover:opacity-80 ${
-                          versioningEnabled 
-                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
-                            : 'bg-gray-500/10 border-gray-500/20 text-gray-500'
-                        }`}
-                        onClick={() => setVersioningEnabled(!versioningEnabled)}
-                        title={versioningEnabled ? "Versioning is ON (Saves new files)" : "Versioning is OFF (Overwrites existing files)"}
-                        >
-                          <HardDrive className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" />
-                          <span className="text-[8px] sm:text-[9px] md:text-[10px] font-bold uppercase tracking-widest">
-                            Ver: {versioningEnabled ? 'ON' : 'OFF'}
+                        <div className="h-6 md:h-8 w-[1px] bg-white/10 mx-0.5 md:mx-1" />
+                        <div className="flex flex-col justify-center">
+                          <span className="text-[7px] md:text-[8px] font-bold uppercase tracking-widest opacity-30 mb-0.5">Editing Section</span>
+                          <span className="text-[9px] md:text-[10px] font-bold uppercase tracking-widest text-emerald-400 truncate max-w-[80px] md:max-w-none">
+                            {activeSection || 'Full Resume'}
                           </span>
                         </div>
-                        <button 
-                          onClick={handleDownloadDOCX}
-                          className="p-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
-                          title="Download as Word Document"
-                        >
-                          <FileDown className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">DOCX</span>
-                        </button>
-                        <button 
-                          onClick={downloadPDF}
-                          disabled={isDownloading}
-                          className="p-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
-                        >
-                          {isDownloading ? (
-                            <>
-                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              <span className="hidden sm:inline">...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Download className="w-3.5 h-3.5" />
-                              <span className="hidden sm:inline">PDF</span>
-                            </>
-                          )}
-                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-start lg:justify-end gap-2">
+                        {overflow.isOverflowing && (
+                          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-500 text-[10px] font-bold animate-pulse">
+                            <AlertCircle className="w-3 h-3" />
+                            <span>OVERFLOW</span>
+                          </div>
+                        )}
+                        
+                        <div className="flex items-center gap-1.5 md:gap-2">
+                          <div className={`flex items-center gap-0.5 md:gap-1 px-1 md:px-1.5 py-0.5 md:py-1 rounded-lg ${isDarkMode ? 'bg-white/5' : 'bg-black/5'}`}>
+                            <button 
+                              onClick={() => {
+                                setIsAutoZoom(false);
+                                setZoom(z => Math.max(0.1, z - 0.1));
+                              }}
+                              className="p-0.5 md:p-1 hover:bg-white/10 rounded transition-colors"
+                              title="Zoom Out"
+                            >
+                              <span className="text-[8px] md:text-[10px] font-bold">-</span>
+                            </button>
+                            <button
+                              onClick={() => setIsAutoZoom(!isAutoZoom)}
+                              className={`text-[8px] md:text-[9px] font-mono w-10 md:w-12 text-center hover:text-emerald-500 transition-colors ${isAutoZoom ? 'text-emerald-500' : ''}`}
+                              title={isAutoZoom ? "Disable Auto-Zoom" : "Enable Auto-Zoom"}
+                            >
+                              {Math.round(zoom * 100)}%
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setIsAutoZoom(false);
+                                setZoom(z => Math.min(2, z + 0.1));
+                              }}
+                              className="p-0.5 md:p-1 hover:bg-white/10 rounded transition-colors"
+                              title="Zoom In"
+                            >
+                              <span className="text-[8px] md:text-[10px] font-bold">+</span>
+                            </button>
+                          </div>
+
+                          <button 
+                            onClick={copyResumeText}
+                            className={`p-1.5 md:p-2 rounded-lg transition-colors text-[8px] md:text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 md:gap-2 ${isDarkMode ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}
+                            title="Copy text for selectable use"
+                          >
+                            <Copy className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                            <span className="hidden lg:inline">Copy</span>
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 md:gap-2">
+                          <div className={`flex items-center gap-1.5 md:gap-2 px-1.5 md:px-2 py-1 md:py-1.5 rounded-lg border transition-all cursor-pointer hover:opacity-80 ${
+                            versioningEnabled 
+                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' 
+                              : 'bg-gray-500/10 border-gray-500/20 text-gray-500'
+                          }`}
+                          onClick={() => setVersioningEnabled(!versioningEnabled)}
+                          title={versioningEnabled ? "Versioning is ON" : "Versioning is OFF"}
+                          >
+                            <HardDrive className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                            <span className="text-[8px] md:text-[9px] font-bold uppercase tracking-widest">
+                              V: {versioningEnabled ? 'ON' : 'OFF'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={handleDownloadDOCX}
+                              className="px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-[8px] md:text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 md:gap-2 shadow-lg shadow-blue-500/10"
+                              title="Download as Word Document"
+                            >
+                              <FileDown className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                              <span>DOCX</span>
+                            </button>
+                            <button 
+                              onClick={downloadPDF}
+                              disabled={isDownloading}
+                              className="px-2 md:px-3 py-1.5 md:py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors text-[8px] md:text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 md:gap-2 disabled:opacity-50 shadow-lg shadow-emerald-500/10"
+                            >
+                              {isDownloading ? (
+                                <div className="w-3.5 h-3.5 md:w-4 md:h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <Download className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                              )}
+                              <span>PDF</span>
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     
                     <div 
                       ref={previewContainerRef}
-                      className={`flex-1 p-4 md:p-8 ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar overflow-auto w-full`}
+                      className={`w-full h-full overflow-auto flex items-start justify-center ${isDarkMode ? 'bg-[#1A1A1A]' : 'bg-gray-200/50'} custom-scrollbar`}
                     >
                       <div 
                         className="flex flex-col gap-8 w-max mx-auto"
@@ -3769,13 +3976,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               )}
             </AnimatePresence>
           </div>
-        </div>
-      </div>
-    </div>
-  </div>
+        </main>
 
-    <footer className={`w-full px-4 md:px-8 py-12 border-t mt-12 transition-colors ${isDarkMode ? 'border-white/10' : 'border-black/5'}`}>
-        <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+      {/* Bottom Panel / Footer */}
+      <footer className={`shrink-0 w-full px-4 md:px-8 py-4 border-t transition-colors ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'}`}>
+        <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 opacity-20" />
             <span className="text-[10px] font-bold opacity-20 uppercase tracking-widest">ATS Optimizer Engine</span>

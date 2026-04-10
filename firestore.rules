@@ -66,6 +66,16 @@ service cloud.firestore {
              data.data is map;
     }
 
+    // Domain Validator for TokenUsage
+    function isValidTokenUsage(data, userId) {
+      return hasOnlyAllowedFields(['userId', 'date', 'gemini', 'openai', 'updatedAt']) &&
+             data.userId is string && data.userId == userId &&
+             data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
+             data.gemini is map && data.gemini.input is number && data.gemini.output is number &&
+             data.openai is map && data.openai.input is number && data.openai.output is number &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -92,6 +102,13 @@ service cloud.firestore {
         allow create, update: if isOwner(userId) && 
                               hasRequiredFields(['userId', 'timestamp', 'name', 'data']) &&
                               isValidResumeVersion(request.resource.data, userId);
+      }
+
+      match /tokenUsage/{dateId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && 
+                              hasRequiredFields(['userId', 'date', 'gemini', 'openai']) &&
+                              isValidTokenUsage(request.resource.data, userId);
       }
     }
   }

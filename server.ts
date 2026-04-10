@@ -137,6 +137,9 @@ async function startServer() {
       const drive = getDriveClient(accessToken);
       const folderId = process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
       
+      // Determine mimeType from fileName
+      const mimeType = fileName.endsWith('.csv') ? 'text/csv' : 'application/pdf';
+
       // Convert base64 to stream
       const buffer = Buffer.from(pdfData, 'base64');
       const bufferStream = new stream.PassThrough();
@@ -168,7 +171,7 @@ async function startServer() {
         await drive.files.update({
           fileId: fileId,
           media: {
-            mimeType: 'application/pdf',
+            mimeType: mimeType,
             body: bufferStream,
           },
           supportsAllDrives: true,
@@ -177,12 +180,12 @@ async function startServer() {
       } else {
         // Create new file
         const finalFileName = versioningEnabled 
-          ? `${fileName.replace('.pdf', '')} (v${new Date().toISOString().replace(/[:.]/g, '-')}).pdf`
+          ? `${fileName.replace(/\.(pdf|csv)$/, '')} (v${new Date().toISOString().replace(/[:.]/g, '-')})${fileName.endsWith('.csv') ? '.csv' : '.pdf'}`
           : fileName;
 
         const fileMetadata: any = {
           name: finalFileName,
-          mimeType: 'application/pdf',
+          mimeType: mimeType,
         };
 
         if (process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID) {
@@ -190,7 +193,7 @@ async function startServer() {
         }
         
         const media = {
-          mimeType: 'application/pdf',
+          mimeType: mimeType,
           body: bufferStream,
         };
 
