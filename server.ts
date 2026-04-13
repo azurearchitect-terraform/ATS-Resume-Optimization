@@ -4,13 +4,18 @@ import puppeteer from "puppeteer";
 import bodyParser from "body-parser";
 import cors from "cors";
 import crypto from "crypto";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
 import { v4 as uuidv4 } from 'uuid';
 import { google } from "googleapis";
 import stream from "stream";
+import * as Optimization from "./server/optimization.js";
+import { calculateCost, UsageLog } from "./server/analytics.js";
 
 dotenv.config();
+
+// In-memory store for usage logs (MVP)
+const usageLogs: UsageLog[] = [];
 
 // PDF Sessions storage
 const pdfSessions = new Map<string, { html: string, css: string, fonts: string, title?: string, timestamp: number }>();
@@ -416,6 +421,64 @@ async function startServer() {
     }
   });
 
+  // API Endpoint to clear cache
+  app.post("/api/cache/clear", (req, res) => {
+    Optimization.clearCache();
+    res.json({ success: true, message: "Cache cleared successfully" });
+  });
+
+  // Admin Analytics Endpoints
+  app.get("/api/admin/stats", (req, res) => {
+    const totalRequests = usageLogs.filter(l => l.endpoint === "/api/v2/optimize").length;
+    const totalTokens = usageLogs.reduce((sum, l) => sum + l.totalTokens, 0);
+    const totalCost = usageLogs.reduce((sum, l) => sum + l.cost, 0);
+    const cacheHits = usageLogs.filter(l => l.cacheHit).length;
+    const cacheHitRatio = totalRequests > 0 ? (cacheHits / totalRequests) * 100 : 0;
+
+    res.json({
+      totalRequests,
+      totalTokens,
+      totalCost,
+      cacheHitRatio
+    });
+  });
+
+  app.get("/api/admin/usage-by-day", (req, res) => {
+    const dailyData: Record<string, { tokens: number, cost: number }> = {};
+    
+    usageLogs.forEach(log => {
+      const date = new Date(log.timestamp).toISOString().split('T')[0];
+      if (!dailyData[date]) {
+        dailyData[date] = { tokens: 0, cost: 0 };
+      }
+      dailyData[date].tokens += log.totalTokens;
+      dailyData[date].cost += log.cost;
+    });
+
+    const result = Object.entries(dailyData).map(([date, data]) => ({
+      date,
+      ...data
+    })).sort((a, b) => a.date.localeCompare(b.date));
+
+    res.json(result);
+  });
+
+  app.get("/api/admin/model-usage", (req, res) => {
+    const modelData: Record<string, number> = {};
+    
+    usageLogs.forEach(log => {
+      const model = log.cacheHit ? "Cache" : log.model;
+      modelData[model] = (modelData[model] || 0) + 1;
+    });
+
+    const result = Object.entries(modelData).map(([name, value]) => ({
+      name,
+      value
+    }));
+
+    res.json(result);
+  });
+
   // API Endpoint to optimize resume
   app.post("/api/optimize", async (req, res) => {
     const { encryptedKey, prompt, model, engine } = req.body;
@@ -424,9 +487,15 @@ async function startServer() {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // Caching Layer
+    const cacheKey = Optimization.generateCacheKey({ prompt, model, engine });
+    const cachedResult = Optimization.getFromCache(cacheKey);
+    if (cachedResult) {
+      return res.json(cachedResult);
+    }
+
     try {
       const decryptedString = decrypt(encryptedKey);
-      console.log(`Decrypted string: ${decryptedString.substring(0, 10)}...`);
       let apiKey = decryptedString;
       
       try {
@@ -439,8 +508,6 @@ async function startServer() {
       } catch (e) {
         // Not JSON, assume it's a single raw key
       }
-      
-      console.log(`Using ${engine} key (masked): ${apiKey.substring(0, 4)}****`);
       
       if (engine === 'openai') {
         const isJsonRequested = prompt.toLowerCase().includes('json');
@@ -463,21 +530,285 @@ async function startServer() {
         }
         
         const data = await response.json();
-        res.json({ 
+        const result = { 
           result: data.choices[0].message.content,
           usage: {
             promptTokenCount: data.usage.prompt_tokens,
             candidatesTokenCount: data.usage.completion_tokens,
             totalTokenCount: data.usage.total_tokens
           }
-        });
+        };
+
+        // Save to cache
+        Optimization.saveToCache(cacheKey, result);
+        
+        res.json(result);
       } else {
         res.status(400).json({ error: "Gemini requests must be handled client-side as per security guidelines." });
       }
     } catch (error: any) {
       console.error("Optimization Error:", error);
-      // Send the error message back to the frontend for better debugging
       res.status(500).json({ error: "Failed to optimize resume", details: error.message || String(error) });
+    }
+  });
+
+  /**
+   * NEW: Optimized Full Pipeline Endpoint (V2)
+   * Step 1: Gemini (cheap) -> Extract keywords, Analyze resume
+   * Step 2: Internal Logic (free) -> Trim content
+   * Step 3: OpenAI (premium) -> Generate final optimized resume
+   */
+  app.post("/api/v2/optimize", async (req, res) => {
+    const { resumeText, jobDescription, targetRole, mode, audience, customPrompt, encryptedKey } = req.body;
+
+    if (!resumeText || !jobDescription || !encryptedKey) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // 1. Check Cache First (Key includes all relevant fields)
+    const cacheKey = Optimization.generateCacheKey({ 
+      resumeText: Optimization.trimInput(resumeText, 2000), // Hash trimmed version for stability
+      jobDescription: Optimization.trimInput(jobDescription, 2000),
+      targetRole, 
+      mode, 
+      audience, 
+      customPrompt 
+    });
+    
+    const cachedResult = Optimization.getFromCache(cacheKey);
+    if (cachedResult) {
+      // Log cache hit
+      usageLogs.push({
+        userId: "anonymous",
+        model: "cache",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        cacheHit: true,
+        endpoint: "/api/v2/optimize",
+        timestamp: Date.now(),
+        cost: 0
+      });
+      return res.json(cachedResult);
+    }
+
+    try {
+      // Decrypt keys
+      const decryptedString = decrypt(encryptedKey);
+      let geminiKey = process.env.GEMINI_API_KEY || "";
+      let openaiKey = "";
+
+      try {
+        const parsedKeys = JSON.parse(decryptedString);
+        openaiKey = parsedKeys.openai || "";
+        if (parsedKeys.gemini) geminiKey = parsedKeys.gemini;
+      } catch (e) {
+        openaiKey = decryptedString; // Fallback
+      }
+
+      if (!openaiKey) throw new Error("OpenAI API Key is required for high-quality generation.");
+
+      // STEP 1: Gemini (Cheap) - Extraction & Analysis
+      console.log("[Pipeline] Step 1: Gemini Extraction...");
+      const [resumeExtraction, jdExtraction] = await Promise.all([
+        Optimization.extractRelevantResumeData(resumeText, geminiKey),
+        Optimization.extractJDKeywords(jobDescription, geminiKey)
+      ]);
+
+      const resumeData = resumeExtraction?.data;
+      const jdKeywords = jdExtraction?.data || [];
+      
+      const geminiUsage = {
+        promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
+        candidatesTokenCount: (resumeExtraction?.usage?.candidatesTokenCount || 0) + (jdExtraction?.usage?.candidatesTokenCount || 0),
+        totalTokenCount: (resumeExtraction?.usage?.totalTokenCount || 0) + (jdExtraction?.usage?.totalTokenCount || 0)
+      };
+
+      if (!resumeData) throw new Error("Failed to extract resume data using Gemini.");
+
+      // STEP 2: Internal Logic (Free) - Trimming
+      console.log("[Pipeline] Step 2: Trimming Content...");
+      const optimizedInput = Optimization.trimContentForAI(resumeData, jdKeywords);
+
+      // STEP 3: Gemini 3.1 Pro (Premium) - Final Generation
+      const finalPrompt = `
+        You are a senior executive resume strategist. 
+        Optimize this structured resume data for the target role: ${targetRole}.
+        Audience: ${audience}. Mode: ${mode}.
+        ${customPrompt ? `Custom Instructions: ${customPrompt}` : ''}
+        
+        INPUT DATA (Optimized):
+        ${JSON.stringify(optimizedInput, null, 2)}
+        
+        STRICT RULES:
+        1. Maintain professional tone.
+        2. Focus on impact and keywords: ${optimizedInput.jd_keywords.join(', ')}.
+        3. INCLUDE ALL ROLES: You MUST include every single role provided in the INPUT DATA. Do not skip any jobs, even very old ones. This is a strict rule.
+        4. BULLET POINT COUNTS:
+           - The first role (most recent) MUST have exactly 7 bullet points.
+           - The second role MUST have exactly 6 bullet points.
+           - The third role MUST have exactly 5 bullet points.
+           - The fourth role MUST have exactly 3 bullet points.
+           - ALL other roles (5th and older) MUST have at least 3 bullet points each.
+        5. Return ONLY a valid JSON object matching the standard OptimizationResult schema.
+        
+        OUTPUT SCHEMA (MUST MATCH EXACTLY):
+        {
+          "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
+          "summary": "string",
+          "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
+          "experience": [ { "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
+          "projects": [ { "title": "string", "description": "string" } ],
+          "education": ["string"],
+          "certifications": ["string"],
+          "ats_keywords_from_jd": ["string"],
+          "ats_keywords_added_to_resume": ["string"],
+          "keyword_gap": ["string"],
+          "match_score": 85,
+          "baseline_score": 60,
+          "improvement_notes": ["string"],
+          "audience_alignment_notes": "string",
+          "rejection_reasons": ["string"]
+        }
+      `;
+
+      let usedModel = "gemini-3.1-pro-preview";
+      let result;
+
+      try {
+        console.log(`[Pipeline] Step 3: Gemini Generation (${usedModel})...`);
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ 
+          model: usedModel,
+          generationConfig: { responseMimeType: "application/json" }
+        });
+
+        const genResult = await model.generateContent(finalPrompt);
+        const response = genResult.response;
+        const text = response.text();
+        
+        const genInput = response.usageMetadata?.promptTokenCount || 0;
+        const genOutput = response.usageMetadata?.candidatesTokenCount || 0;
+
+        // Log Gemini Pro usage
+        usageLogs.push({
+          userId: "anonymous",
+          model: usedModel,
+          inputTokens: genInput,
+          outputTokens: genOutput,
+          totalTokens: response.usageMetadata?.totalTokenCount || 0,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(usedModel, genInput, genOutput)
+        });
+
+        // Log Gemini 3 usage (extraction steps)
+        const geminiInput = geminiUsage.promptTokenCount;
+        const geminiOutput = geminiUsage.candidatesTokenCount;
+        usageLogs.push({
+          userId: "anonymous",
+          model: "gemini-3-flash-preview",
+          inputTokens: geminiInput,
+          outputTokens: geminiOutput,
+          totalTokens: geminiUsage.totalTokenCount,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost("gemini-3-flash-preview", geminiInput, geminiOutput)
+        });
+
+        result = {
+          result: text,
+          usage: {
+            promptTokenCount: genInput,
+            candidatesTokenCount: genOutput,
+            totalTokenCount: response.usageMetadata?.totalTokenCount || 0
+          },
+          geminiUsage,
+          intermediateData: {
+            resumeData,
+            jdKeywords
+          },
+          _model: usedModel,
+          _optimized: true
+        };
+        
+        console.log(`[Usage Log] Model: ${usedModel}, In: ${genInput}, Out: ${genOutput}`);
+
+      } catch (genError: any) {
+        console.warn("[Pipeline] Gemini Pro Failed, falling back to Gemini Flash...", genError.message);
+        
+        // FALLBACK: Gemini 3 Flash
+        const fallbackModelName = "gemini-3-flash-preview";
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: fallbackModelName });
+        
+        const fallbackResult = await model.generateContent(finalPrompt);
+        const fallbackResponse = fallbackResult.response;
+        const text = fallbackResponse.text();
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        
+        if (!jsonMatch) throw new Error("Fallback Gemini failed to return valid JSON");
+
+        const fallbackInput = fallbackResponse.usageMetadata?.promptTokenCount || 0;
+        const fallbackOutput = fallbackResponse.usageMetadata?.candidatesTokenCount || 0;
+
+        // Log Fallback usage
+        usageLogs.push({
+          userId: "anonymous",
+          model: fallbackModelName,
+          inputTokens: fallbackInput,
+          outputTokens: fallbackOutput,
+          totalTokens: fallbackResponse.usageMetadata?.totalTokenCount || 0,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(fallbackModelName, fallbackInput, fallbackOutput)
+        });
+
+        // Log Gemini 3 usage (extraction steps)
+        const geminiInput = geminiUsage.promptTokenCount;
+        const geminiOutput = geminiUsage.candidatesTokenCount;
+        usageLogs.push({
+          userId: "anonymous",
+          model: "gemini-3-flash-preview",
+          inputTokens: geminiInput,
+          outputTokens: geminiOutput,
+          totalTokens: geminiUsage.totalTokenCount,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost("gemini-3-flash-preview", geminiInput, geminiOutput)
+        });
+
+        result = {
+          result: jsonMatch[0],
+          usage: {
+            promptTokenCount: fallbackResponse.usageMetadata?.promptTokenCount || 0, 
+            candidatesTokenCount: fallbackResponse.usageMetadata?.candidatesTokenCount || 0,
+            totalTokenCount: fallbackResponse.usageMetadata?.totalTokenCount || 0
+          },
+          geminiUsage,
+          intermediateData: {
+            resumeData,
+            jdKeywords
+          },
+          _model: fallbackModelName,
+          _optimized: true,
+          _fallback: true
+        };
+        
+        console.log(`[Usage Log] Fallback Model: ${fallbackModelName}`);
+      }
+
+      // STEP 4: Cache Result
+      Optimization.saveToCache(cacheKey, result);
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("V2 Optimization Error:", error);
+      res.status(500).json({ error: "Failed to optimize resume via V2 pipeline", details: error.message });
     }
   });
 

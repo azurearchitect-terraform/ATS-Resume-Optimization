@@ -345,72 +345,65 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
 
   return (
     <div className={`rounded-xl border p-4 ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
-      <div className="flex flex-wrap gap-2 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-6">
         <button 
           onClick={() => setActiveTab('skillGap')} 
-          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
             activeTab === 'skillGap' 
-              ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+              : (isDarkMode ? 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
           }`}
         >
-          <Zap className="w-5 h-5"/>
-          Gap Analysis
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4"/>
+            <span className="text-[11px] font-bold">Gap Analysis</span>
+          </div>
+          <span className="text-[9px] opacity-70 text-left leading-tight">Find missing keywords</span>
         </button>
+        
         <button 
           onClick={() => setActiveTab('interview')} 
-          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
             activeTab === 'interview' 
-              ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+              : (isDarkMode ? 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
           }`}
         >
-          <Brain className="w-5 h-5"/>
-          Interview
+          <div className="flex items-center gap-2">
+            <Brain className="w-4 h-4"/>
+            <span className="text-[11px] font-bold">Interview Prep</span>
+          </div>
+          <span className="text-[9px] opacity-70 text-left leading-tight">Generate tailored questions</span>
         </button>
+        
         <button 
           onClick={() => setActiveTab('coverLetter')} 
-          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
             activeTab === 'coverLetter' 
-              ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+              : (isDarkMode ? 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
           }`}
         >
-          <FileText className="w-5 h-5"/>
-          Cover Letter
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4"/>
+            <span className="text-[11px] font-bold">Cover Letter</span>
+          </div>
+          <span className="text-[9px] opacity-70 text-left leading-tight">Draft a matching letter</span>
         </button>
+        
         <button 
           onClick={() => setActiveTab('recruiterMessage')} 
-          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
+          className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
             activeTab === 'recruiterMessage' 
-              ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+              : (isDarkMode ? 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
           }`}
         >
-          <FileText className="w-5 h-5"/>
-          Recruiter Msg
-        </button>
-        <button 
-          onClick={() => setActiveTab('history')} 
-          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
-            activeTab === 'history' 
-              ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
-          }`}
-        >
-          <History className="w-5 h-5"/>
-          Versions
-        </button>
-        <button 
-          onClick={() => setActiveTab('headline')} 
-          className={`flex-1 flex flex-col items-center justify-center gap-1 p-3 rounded-xl text-[10px] sm:text-xs font-bold transition-all ${
-            activeTab === 'headline' 
-              ? 'bg-emerald-500 text-black' 
-              : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/40 hover:text-black')
-          }`}
-        >
-          <Zap className="w-5 h-5"/>
-          Headline
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4"/>
+            <span className="text-[11px] font-bold">Recruiter Msg</span>
+          </div>
+          <span className="text-[9px] opacity-70 text-left leading-tight">Short LinkedIn outreach</span>
         </button>
       </div>
 

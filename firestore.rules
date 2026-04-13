@@ -50,10 +50,13 @@ service cloud.firestore {
 
     // Domain Validator for UserProfile
     function isValidUserProfile(data, userId) {
-      return hasOnlyAllowedFields(['userId', 'encryptedApiKey', 'masterResume', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['userId', 'encryptedApiKey', 'masterResume', 'customPrompt', 'driveAccessToken', 'settings', 'updatedAt']) &&
              data.userId is string && data.userId == userId &&
-             data.encryptedApiKey is string && data.encryptedApiKey.size() < 2000 &&
-             data.masterResume is string && data.masterResume.size() < 500000 &&
+             (!('encryptedApiKey' in data) || (data.encryptedApiKey is string && data.encryptedApiKey.size() < 2000)) &&
+             (!('masterResume' in data) || (data.masterResume is string && data.masterResume.size() < 500000)) &&
+             (!('customPrompt' in data) || (data.customPrompt is string && data.customPrompt.size() < 5000)) &&
+             (!('driveAccessToken' in data) || (data.driveAccessToken is string && data.driveAccessToken.size() < 2000)) &&
+             (!('settings' in data) || data.settings is map) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
@@ -68,11 +71,11 @@ service cloud.firestore {
 
     // Domain Validator for TokenUsage
     function isValidTokenUsage(data, userId) {
-      return hasOnlyAllowedFields(['userId', 'date', 'gemini', 'openai', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['userId', 'month', 'gemini', 'openai', 'updatedAt']) &&
              data.userId is string && data.userId == userId &&
-             data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
-             data.gemini is map && data.gemini.input is number && data.gemini.output is number &&
-             data.openai is map && data.openai.input is number && data.openai.output is number &&
+             data.month is string && data.month.matches('^\\d{4}-\\d{2}$') &&
+             (!('gemini' in data) || (data.gemini is map && data.gemini.input is number && data.gemini.output is number)) &&
+             (!('openai' in data) || (data.openai is map && data.openai.input is number && data.openai.output is number)) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
@@ -86,12 +89,10 @@ service cloud.firestore {
       
       // Users can create their own profile
       allow create: if isOwner(userId) && 
-                    hasRequiredFields(['userId', 'encryptedApiKey', 'masterResume']) &&
                     isValidUserProfile(request.resource.data, userId);
                     
       // Users can update their own profile
       allow update: if isOwner(userId) && 
-                    hasRequiredFields(['userId', 'encryptedApiKey', 'masterResume']) &&
                     isValidUserProfile(request.resource.data, userId);
                     
       // Users can delete their own profile
@@ -100,14 +101,12 @@ service cloud.firestore {
       match /resumeVersions/{versionId} {
         allow read, delete: if isOwner(userId);
         allow create, update: if isOwner(userId) && 
-                              hasRequiredFields(['userId', 'timestamp', 'name', 'data']) &&
                               isValidResumeVersion(request.resource.data, userId);
       }
 
-      match /tokenUsage/{dateId} {
+      match /tokenUsage/{monthId} {
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId) && 
-                              hasRequiredFields(['userId', 'date', 'gemini', 'openai']) &&
                               isValidTokenUsage(request.resource.data, userId);
       }
     }

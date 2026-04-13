@@ -32,25 +32,25 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
   let selectedEngine: EngineType;
 
   switch (task) {
-    // Tasks routed to Gemini
+    // Tasks routed to Gemini (Cost-effective & High Performance)
     case 'parse_resume':
     case 'extract_job_description':
     case 'extract_skills':
     case 'ats_scoring':
     case 'evaluate_suitability':
+    case 'multi_audience':
+    case 'interview_questions':
+    case 'recruiter_message':
+    case 'optimize_headline':
+    case 'optimize_about':
       selectedEngine = 'gemini';
       break;
 
-    // Tasks routed to OpenAI
+    // Tasks routed to OpenAI (Premium Quality & Complex Reasoning)
     case 'rewrite_resume':
-    case 'multi_audience':
     case 'recruiter_simulation':
-    case 'interview_questions':
     case 'cover_letter':
-    case 'recruiter_message':
     case 'linkedin_analysis':
-    case 'optimize_headline':
-    case 'optimize_about':
       selectedEngine = 'openai';
       break;
       

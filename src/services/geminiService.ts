@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
@@ -42,7 +42,17 @@ export interface OptimizationResult {
     candidatesTokenCount: number;
     totalTokenCount: number;
   };
+  _geminiUsage?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  };
+  _intermediateData?: {
+    resumeData: any;
+    jdKeywords: string[];
+  };
   _engine?: string;
+  _model?: string;
 }
 
 export type EngineType = 'gemini' | 'openai';
@@ -102,29 +112,23 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
         throw new Error("Gemini API key is missing from the environment.");
       }
 
-      const ai = new GoogleGenAI({ apiKey });
-      
-      const tools: any[] = [];
-      if (prompt.toLowerCase().includes('http') || prompt.toLowerCase().includes('url')) {
-        tools.push({ urlContext: {} });
-        tools.push({ googleSearch: {} });
-      }
-
-      const response = await ai.models.generateContent({
-        model: model || "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const genModel = genAI.getGenerativeModel({ 
+        model: model || "gemini-2.5-flash",
+        generationConfig: {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
-          tools: tools.length > 0 ? tools : undefined
         }
       });
 
+      const result = await genModel.generateContent(prompt);
+      const response = result.response;
+
       return {
-        result: response!.text,
+        result: response.text(),
         usage: {
-          promptTokenCount: response!.usageMetadata?.promptTokenCount || 0,
-          candidatesTokenCount: response!.usageMetadata?.candidatesTokenCount || 0,
-          totalTokenCount: response!.usageMetadata?.totalTokenCount || 0
+          promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
+          candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
+          totalTokenCount: response.usageMetadata?.totalTokenCount || 0
         }
       };
     } catch (error: any) {
@@ -195,7 +199,7 @@ export async function evaluateSuitability(
   config: RouterConfig
 ): Promise<SuitabilityResult> {
   const routedConfig = routeTask('evaluate_suitability', config);
-  const modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3-flash-preview';
+  const modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash';
 
   const prompt = `
 You are an expert technical recruiter screening a candidate's resume against a job description.
@@ -244,107 +248,115 @@ export async function optimizeResume(
   customPrompt?: string
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
-  const modelToUse = fastMode ? (routedConfig.engine === 'openai' ? 'gpt-5.4-mini' : 'gemini-3-flash-preview') : routedConfig.model;
+  
+  // Cost-saving logic: If fastMode is enabled, prefer Gemini Flash even in Hybrid mode to reduce OpenAI costs
+  let modelToUse = routedConfig.model;
+  let engineToUse = routedConfig.engine;
+  
+  if (fastMode) {
+    if (config.mode === 'production') {
+      // In Hybrid mode, fastMode forces Gemini to save costs
+      engineToUse = 'gemini';
+      modelToUse = 'gemini-2.5-flash';
+    } else {
+      // In single-engine mode, just use the smaller model
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash';
+    }
+  }
+
   const isLeadershipRole = /director|manager|lead|head|executive|vp|chief|principal|senior manager/i.test(targetRole);
   const isTechnicalRole = /engineer|developer|architect|specialist|analyst|technician/i.test(targetRole);
 
-  const prompt = `
-ROLE:
-You are a senior executive resume strategist.
-${recruiterSimulationMode ? 'You are acting as a strict Hiring Manager/Recruiter. Your goal is to critically evaluate the resume against the job description and provide specific, actionable rejection reasons.' : ''}
+  // V2 PIPELINE INTEGRATION: Use the optimized backend pipeline for production mode
+  if (config.mode === 'production' && !recruiterSimulationMode && !fastMode) {
+    try {
+      const response = await fetch('/api/v2/optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resumeText,
+          jobDescription,
+          targetRole,
+          mode,
+          audience,
+          customPrompt,
+          encryptedKey: config.openaiConfig.apiKey
+        })
+      });
 
-${customPrompt ? `CUSTOM USER INSTRUCTIONS (PRIORITY):
-${customPrompt}
-` : ''}
+      if (response.ok) {
+        const data = await response.json();
+        const resultText = extractJson(data.result || "");
+        const parsed = JSON.parse(resultText);
+        
+        // Post-processing
+        parsed._engine = 'hybrid-v2';
+        if (data.usage) parsed._usage = data.usage;
+        if (data.geminiUsage) parsed._geminiUsage = data.geminiUsage;
+        if (data.intermediateData) parsed._intermediateData = data.intermediateData;
+        
+        // Apply UI formatting
+        const skillCategories = Object.keys(parsed.skills || {});
+        const formattedSkills: Record<string, string[]> = {};
+        skillCategories.slice(0, 4).forEach(cat => {
+          formattedSkills[cat] = parsed.skills[cat];
+        });
+        const defaultCats = isLeadershipRole 
+          ? ["Strategic Leadership", "Management", "Operations", "Technical Proficiency"]
+          : ["Core Technical", "Tools & Frameworks", "Process & Methodology", "Soft Skills"];
+        while (Object.keys(formattedSkills).length < 4) {
+          const nextCat = defaultCats.find(c => !formattedSkills[c]);
+          if (nextCat) formattedSkills[nextCat] = [];
+          else formattedSkills[`Category ${Object.keys(formattedSkills).length + 1}`] = [];
+        }
+        parsed.skills = formattedSkills;
+
+        return parsed;
+      }
+    } catch (e) {
+      console.warn("V2 Pipeline failed, falling back to legacy optimization:", e);
+    }
+  }
+
+  const prompt = `
+ROLE: Senior Executive Resume Strategist.
+${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejection reasons.' : 'TASK: Optimize resume for target role.'}
+
+${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 
 STRICT RULES:
-* TITLE PRESERVATION: STRICTLY preserve ALL exact role titles and job titles exactly as they appear in the input resume. Do NOT change, rephrase, correct, or "fix" them (e.g., do not change "Officer IT cum Logistics" to "Office IT cum Logistics"), even if they seem like typos. This is a non-negotiable requirement.
-* Resume must fit within EXACTLY 2 A4 pages
-* Do NOT exceed 2 pages
-* Do NOT leave large empty spaces
-* Use compact but powerful bullet points
-* Maintain consistent spacing and alignment
-* Ensure no text is cut from left or right margins
-
-TASK:
-1. Rewrite the summary (medium length, 3-4 strong lines)
-2. Optimize experience with impactful bullet points
-3. Balance content across 2 pages
-4. Ensure proper section distribution
-5. Extract and format personal information (Name, Location, Email, Phone, LinkedIn)
-${recruiterSimulationMode ? '6. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
-
-FORMAT:
-* Clean professional formatting
-* Bullet points concise but strong
-* No unnecessary spacing
-* No explanations, only final resume
-
-IMPORTANT:
-The output must be layout-aware and ready for A4 PDF rendering.
-The output will be rendered inside a Canva-like resume editor using a fixed A4 layout (794x1123 px per page).
-You must generate structured, layout-safe content that fits within these constraints.
-* ALWAYS use Smart Bullet Enhancer: rewrite bullets to be high-impact, quantifiable, and action-oriented.
-* HUMAN-LIKE, REALISTIC TONE: The resume MUST sound like it was written by a human professional, not an AI. STRICTLY AVOID common AI buzzwords and clichés such as "spearheaded", "synergized", "testament to", "delved into", "unwavering", "pivotal", "catalyst", "fostered", "orchestrated", "navigated", "seamlessly", "elevated", "championed", or "transformative". Use plain, direct, and professional business language.
-* PROFESSIONAL EXPERTISE: Ensure the tone reflects deep expertise and seniority. Use sophisticated but clear vocabulary. Do not oversimplify the candidate's achievements; instead, articulate them with precision and impact.
-* Calculate a REALISTIC and STRICT match score based on how well the candidate's strengths align with the JD requirements. Do not artificially cap the score; if it is a 95% match, score it 95%.
-${isLeadershipRole ? `* FOCUS ON LEADERSHIP & STRATEGY: Since this is a ${targetRole} role, emphasize strategic vision, team management, stakeholder engagement, budget oversight, and business impact. De-emphasize hands-on technical tasks in favor of high-level outcomes.` : ''}
-${isTechnicalRole && !isLeadershipRole ? `* FOCUS ON TECHNICAL DEPTH: Highlight specific tools, architectures, and technical problem-solving. Ensure the resume demonstrates deep expertise in the required tech stack.` : ''}
-* CACHING MECHANISM (PRESERVATION):
-  - HEADER: Preserve the personal information exactly as provided.
-  - EDUCATION: Do NOT re-optimize or change the education section if it is already well-formatted.
-  - CERTIFICATIONS: STRICTLY preserve existing certifications from the input resume. DO NOT invent, hallucinate, or add any new certifications under any circumstances. If the user has 3 certifications, output exactly those 3.
-* Ensure every bullet point starts with a strong action verb and includes a measurable result if possible.
-
-CRITICAL ISSUES TO RESOLVE:
-1. FULL CAREER HISTORY:
-* Include ALL roles from the input resume in the experience section.
-* Do NOT summarize older roles into a separate section.
-* Every role must have at least 3 high-impact bullet points.
-* Include quantifiable metrics (e.g., %, $, time saved) naturally where they make sense, but do not force them into every bullet to keep it looking normal.
-
-2. EDUCATION:
-* If a degree is in progress, reframe as: "Continuing Education" or "Degree in Progress".
-* Maintain credibility and professionalism.
-
-3. VISUAL STRUCTURE FOR UI:
-* Do NOT include lines, separators, or styling text.
-* Skills must be grouped logically for grid display into 4 categories.
-${isLeadershipRole ? `* Suggested skill categories for this role: Strategic Leadership, Management, Operations, Technical Proficiency.` : `* Suggested skill categories for this role: Core Technical, Tools & Frameworks, Process & Methodology, Soft Skills.`}
-* Keep skills short (1–3 words).
-
-LAYOUT-SAFE CONTENT RULES (MANDATORY):
-- SUMMARY: Impactful 3-4 line summary, highlighting key strategic impact and relevant expertise.
-- SKILLS: Max 15–20 items total across categories.
-- EXPERIENCE: Include ALL roles from the input. For the 3 most recent roles, provide at most 7 high-impact bullets. For all other roles, provide at most 3-4 bullets. Each bullet max 15 words. Focus on impact and relevant depth. Use quantifiable metrics (e.g., %) only when appropriate and realistic, avoiding an unnatural overload of numbers.
-- CERTIFICATIONS: ONLY include certifications present in the input resume. Do NOT add any new ones.
-- PROJECTS: Max 3 high-impact projects. Use the projects from the Master Resume as the source. You MUST include this section if projects are present in the input.
-- EDUCATION: Properly reframed. You MUST include this section.
+- PRESERVE TITLES: Do not change job titles (e.g. "Officer IT cum Logistics" stays exactly as is).
+- INCLUDE ALL ROLES: Do not skip older roles. Include every role present in the input.
+- MAX 2 PAGES: Content must fit A4 layout (794x1123px).
+- TONE: Professional, human-like. Avoid AI clichés (spearheaded, synergized, etc.).
+- SCORE: Realistic match score (0-100).
+- SECTIONS: Summary (3-4 lines), Experience (Impactful bullets, max 7 for recent, 3 for older), Skills (4 categories), Projects (Max 3), Education & Certs (Preserve existing).
 
 INPUT:
 RESUME: ${resumeText}
-${linkedInPdfText ? `LINKEDIN PROFILE EXPORT: ${linkedInPdfText}` : ''}
-${linkedInUrl ? `LINKEDIN PROFILE URL: ${linkedInUrl}` : ''}
-${jobDescription ? `JOB DESCRIPTION: ${jobDescription}` : ''}
-${jobUrl ? `JOB DESCRIPTION URL: ${jobUrl}` : ''}
-TARGET ROLE: ${targetRole}
-OPTIMIZATION MODE: ${mode}
-TARGET AUDIENCE: ${audience}
-RECRUITER SIMULATION MODE: ${recruiterSimulationMode}
+JD: ${jobDescription}
+ROLE: ${targetRole}
+MODE: ${mode} | AUDIENCE: ${audience}
 
------------------------------------
-⚙️ PROCESSING STEPS
------------------------------------
-1. Extract key requirements and keywords from JD (or JD URL).
-2. Identify gaps between resume (and LinkedIn profile) and JD.
-3. Calculate a BASELINE ATS score (0-100).
-4. Optimize all sections following the STRICT RULES above.
-5. Ensure ATS keyword density is improved naturally.
-6. Calculate approximate optimized match score (0–100).
-7. Ensure PROJECTS and EDUCATION are included in the final JSON.
-${recruiterSimulationMode ? '8. Provide specific rejection reasons if the resume does not meet the JD requirements.' : ''}
-
-Return the result in the following JSON format: { "personal_info": { "name": string, "location": string, "email": string, "phone": string, "linkedin": string, "linkedinText": string }, "summary": string, "skills": { "Infrastructure": string[], "DevSecOps": string[], "Governance": string[], "Observability": string[] }, "experience": { "role": string, "company": string, "duration": string, "bullets": string[] }[], "projects": { "title": string, "description": string }[], "education": string[], "certifications": string[], "ats_keywords_from_jd": string[], "ats_keywords_added_to_resume": string[], "keyword_gap": string[], "match_score": number, "baseline_score": number, "improvement_notes": string[], "audience_alignment_notes": string, "rejection_reasons": string[] }
+OUTPUT: JSON matching OptimizationResult schema.
+OUTPUT SCHEMA (MUST MATCH EXACTLY):
+{
+  "personal_info": { "name": "string", "location": "string", "email": "string", "phone": "string", "linkedin": "string", "linkedinText": "string" },
+  "summary": "string",
+  "skills": { "Category 1": ["string"], "Category 2": ["string"], "Category 3": ["string"], "Category 4": ["string"] },
+  "experience": [ { "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
+  "projects": [ { "title": "string", "description": "string" } ],
+  "education": ["string"],
+  "certifications": ["string"],
+  "ats_keywords_from_jd": ["string"],
+  "ats_keywords_added_to_resume": ["string"],
+  "keyword_gap": ["string"],
+  "match_score": 85,
+  "baseline_score": 60,
+  "improvement_notes": ["string"],
+  "audience_alignment_notes": "string",
+  "rejection_reasons": ["string"]
+}
 `;
 
   const maxRetries = 5;
@@ -353,11 +365,13 @@ Return the result in the following JSON format: { "personal_info": { "name": str
 
   while (retryCount <= maxRetries) {
     try {
-      const data = await callAI(prompt, currentModel, routedConfig.engine, routedConfig.apiKey);
+      // Use the potentially overridden engine and model
+      const currentApiKey = engineToUse === 'openai' ? config.openaiConfig.apiKey : config.geminiConfig.apiKey;
+      const data = await callAI(prompt, currentModel, engineToUse, currentApiKey);
       const resultText = extractJson(data.result || "");
 
       if (!resultText) {
-        throw new Error(`No response from ${routedConfig.engine}`);
+        throw new Error(`No response from ${engineToUse}`);
       }
 
       try {
@@ -392,7 +406,7 @@ Return the result in the following JSON format: { "personal_info": { "name": str
         }
 
         parsed.skills = formattedSkills;
-        parsed._engine = routedConfig.engine;
+        parsed._engine = engineToUse;
 
         if (data.usage) {
           parsed._usage = data.usage;
@@ -418,8 +432,8 @@ Return the result in the following JSON format: { "personal_info": { "name": str
 
         return fixTitle(parsed);
       } catch (e) {
-        console.error(`Error parsing ${routedConfig.engine} response:`, e, "Raw text:", resultText);
-        throw new Error(`JSON_PARSING_ERROR: The ${routedConfig.engine} engine returned an invalid response format.`);
+        console.error(`Error parsing ${engineToUse} response:`, e, "Raw text:", resultText);
+        throw new Error(`JSON_PARSING_ERROR: The ${engineToUse} engine returned an invalid response format.`);
       }
     } catch (error: any) {
       const errorString = error?.message || String(error);
@@ -434,14 +448,14 @@ Return the result in the following JSON format: { "personal_info": { "name": str
         retryCount++;
         
         // Fallback to Flash if Pro fails with rate limit or JSON error
-        if (routedConfig.engine === 'gemini' && currentModel.includes('pro')) {
+        if (engineToUse === 'gemini' && currentModel.includes('pro')) {
           console.warn(`Error hit on Gemini Pro. Falling back to Gemini Flash for retry ${retryCount}...`);
-          currentModel = 'gemini-3-flash-preview';
+          currentModel = 'gemini-2.5-flash';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
         const retryMsg = isRateLimit 
-          ? `Gemini API quota exceeded. Retrying with exponential backoff (${retryCount}/${maxRetries})...`
+          ? `AI API quota exceeded. Retrying with exponential backoff (${retryCount}/${maxRetries})...`
           : `Invalid AI response format. Retrying (${retryCount}/${maxRetries})...`;
           
         console.warn(`${retryMsg} (Delay: ${Math.round(delay)}ms)`);
@@ -453,7 +467,7 @@ Return the result in the following JSON format: { "personal_info": { "name": str
     }
   }
 
-  throw new Error(`Maximum retries exceeded for ${routedConfig.engine}. Please try again in a few minutes.`);
+  throw new Error(`Maximum retries exceeded for ${engineToUse}. Please try again in a few minutes.`);
 }
 
 export async function analyzeSkillGap(
@@ -488,6 +502,7 @@ export async function analyzeBestAudiences(
 ): Promise<string[]> {
   const routedConfig = routeTask('multi_audience', config);
   console.log('analyzeBestAudiences called', { jobDescription, targetRole });
+  const modelToUse = 'gemini-3.1-pro-preview';
   const prompt = `
     Analyze the following Job Description and Target Role.
     Select the most appropriate audiences from the following list:
@@ -515,7 +530,7 @@ export async function analyzeBestAudiences(
   `;
 
   try {
-    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const data = await callAI(prompt, modelToUse, 'gemini', routedConfig.apiKey);
     const resultText = extractJson(data.result || "");
     const parsed = JSON.parse(resultText || '[]');
     return Array.isArray(parsed) ? parsed : (parsed.audiences || [targetRole]);

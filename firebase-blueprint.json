@@ -21,6 +21,10 @@
           "type": "string",
           "description": "The user's custom AI optimization prompt."
         },
+        "driveAccessToken": {
+          "type": "string",
+          "description": "Google Drive access token for autoconnect."
+        },
         "settings": {
           "type": "object",
           "description": "User preferences and settings.",
@@ -63,11 +67,11 @@
     },
     "TokenUsage": {
       "title": "TokenUsage",
-      "description": "Stores daily token usage for a user.",
+      "description": "Stores monthly token usage for a user.",
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
-        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "month": { "type": "string", "description": "YYYY-MM" },
         "gemini": {
           "type": "object",
           "properties": {
@@ -84,7 +88,7 @@
         },
         "updatedAt": { "type": "timestamp" }
       },
-      "required": ["userId", "date", "gemini", "openai"]
+      "required": ["userId", "month", "gemini", "openai"]
     }
   },
   "firestore": {
@@ -100,11 +104,11 @@
       },
       "description": "Collection of saved resume versions for a user."
     },
-    "/users/{userId}/tokenUsage/{dateId}": {
+    "/users/{userId}/tokenUsage/{monthId}": {
       "schema": {
         "$ref": "#/entities/TokenUsage"
       },
-      "description": "Collection of daily token usage records."
+      "description": "Collection of monthly token usage records."
     }
   }
 }

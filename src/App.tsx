@@ -62,9 +62,10 @@ import { saveAs } from 'file-saver';
 
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy, increment } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy, increment, onSnapshot } from 'firebase/firestore';
 import { handleFirestoreError } from './lib/firebaseUtils';
 import { OperationType } from './types';
+import { AdminDashboard } from './components/AdminDashboard';
 
 // Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -94,6 +95,16 @@ export default function App() {
   const [isAutosaveEnabled, setIsAutosaveEnabled] = useState(() => {
     return localStorage.getItem('isAutosaveEnabled') === 'true';
   });
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+
+  useEffect(() => {
+    // Clean up URL parameters if they exist (like ?origin=...)
+    if (window.location.search) {
+      const url = new URL(window.location.href);
+      url.search = '';
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('versioningEnabled', versioningEnabled.toString());
@@ -162,6 +173,10 @@ export default function App() {
               setOpenaiApiKey('••••••••••••••••'); // Placeholder
               setIsApiKeySaved(true);
             }
+            if (data.driveAccessToken) {
+              setDriveAccessToken(data.driveAccessToken);
+              setIsDriveConnected(true);
+            }
           }
         } catch (err) {
           console.error("Error fetching profile:", err);
@@ -170,6 +185,8 @@ export default function App() {
         setOpenaiApiKey('');
         setEncryptedApiKey('');
         setIsApiKeySaved(false);
+        setDriveAccessToken(null);
+        setIsDriveConnected(false);
       }
       setIsAuthReady(true);
     });
@@ -297,21 +314,50 @@ export default function App() {
       if (credential?.accessToken) {
         setDriveAccessToken(credential.accessToken);
         setIsDriveConnected(true);
+        // Save token to Firestore for cross-device autoconnect
+        if (user) {
+          await setDoc(doc(db, 'users', user.uid), {
+            driveAccessToken: credential.accessToken,
+            settings: { isDriveConnected: true }
+          }, { merge: true });
+        }
         showToast('Google Drive connected successfully!', 'success');
       }
     } catch (error: any) {
       console.error('Drive connection error:', error);
-      showToast('Failed to connect Google Drive', 'error');
+      if (error.code === 'auth/cancelled-popup-request') {
+        showToast('Login cancelled. Please complete the Google popup to connect Drive.', 'error');
+      } else {
+        showToast('Failed to connect Google Drive', 'error');
+      }
     }
   };
 
   const handleLogin = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (err) {
+      // Add Drive scope for autoconnect
+      provider.addScope('https://www.googleapis.com/auth/drive.file');
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setDriveAccessToken(credential.accessToken);
+        setIsDriveConnected(true);
+        // Save token to Firestore for cross-device autoconnect
+        if (result.user) {
+          await setDoc(doc(db, 'users', result.user.uid), {
+            driveAccessToken: credential.accessToken,
+            settings: { isDriveConnected: true }
+          }, { merge: true });
+        }
+      }
+    } catch (err: any) {
       console.error("Login Error:", err);
-      showToast("Failed to login.", "error");
+      if (err.code === 'auth/cancelled-popup-request') {
+        showToast("Login cancelled. Please complete the Google popup.", "error");
+      } else {
+        showToast("Failed to login.", "error");
+      }
     }
   };
 
@@ -414,7 +460,7 @@ export default function App() {
     return "";
   });
   const [jobDescription, setJobDescription] = useState('');
-  const [activeTab, setActiveTab] = useState<'config' | 'style' | 'tools' | 'profile' | 'guide'>('config');
+  const [activeTab, setActiveTab] = useState<'build' | 'style' | 'assets' | 'profile' | 'guide'>('build');
   const [targetRole, setTargetRole] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
@@ -586,7 +632,7 @@ export default function App() {
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
     gemini: { model: 'gemini-3.1-pro-preview', apiKey: '' },
-    openai: { model: 'gpt-5.4-nano', apiKey: '' },
+    openai: { model: 'gpt-4o-mini', apiKey: '' },
     production: { model: 'auto', apiKey: '' }
   });
   const [selectedEngine, setSelectedEngine] = useState<EngineType | 'production'>('gemini');
@@ -713,7 +759,38 @@ export default function App() {
     openai: { input: 0, output: 0 }
   });
 
+  const [isRefreshingTokens, setIsRefreshingTokens] = useState(false);
+
   const getTodayStr = () => new Date().toISOString().split('T')[0];
+  const getCurrentMonthStr = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  const fetchTokenUsageManual = async () => {
+    if (!user) return;
+    setIsRefreshingTokens(true);
+    const currentMonth = getCurrentMonthStr();
+    const path = `users/${user.uid}/tokenUsage/${currentMonth}`;
+    const usageRef = doc(db, path);
+    
+    try {
+      const docSnap = await getDoc(usageRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setTokenUsage({
+          gemini: data.gemini || { input: 0, output: 0 },
+          openai: data.openai || { input: 0, output: 0 }
+        });
+      }
+      showToast('Token usage updated', 'success');
+    } catch (err) {
+      console.error('Failed to refresh tokens:', err);
+      showToast('Failed to refresh tokens', 'error');
+    } finally {
+      setIsRefreshingTokens(false);
+    }
+  };
 
   // Fetch token usage from Firestore on login/date change
   useEffect(() => {
@@ -725,51 +802,41 @@ export default function App() {
       return;
     }
 
-    const fetchUsage = async () => {
-      const today = getTodayStr();
-      const usageRef = doc(db, 'users', user.uid, 'tokenUsage', today);
-      try {
-        const docSnap = await getDoc(usageRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setTokenUsage({
-            gemini: data.gemini || { input: 0, output: 0 },
-            openai: data.openai || { input: 0, output: 0 }
-          });
-        } else {
-          setTokenUsage({
-            gemini: { input: 0, output: 0 },
-            openai: { input: 0, output: 0 }
-          });
-        }
-      } catch (err) {
-        console.error("Error fetching token usage:", err);
-      }
-    };
-
-    fetchUsage();
-
-    // Set up a timer to reset at midnight
-    const now = new Date();
-    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const msUntilMidnight = tomorrow.getTime() - now.getTime();
+    const currentMonth = getCurrentMonthStr();
+    const path = `users/${user.uid}/tokenUsage/${currentMonth}`;
+    const usageRef = doc(db, path);
     
-    const timer = setTimeout(() => {
-      fetchUsage();
-    }, msUntilMidnight + 1000);
+    // Use onSnapshot for real-time cross-device sync
+    const unsubscribe = onSnapshot(usageRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setTokenUsage({
+          gemini: data.gemini || { input: 0, output: 0 },
+          openai: data.openai || { input: 0, output: 0 }
+        });
+      } else {
+        setTokenUsage({
+          gemini: { input: 0, output: 0 },
+          openai: { input: 0, output: 0 }
+        });
+      }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, path);
+    });
 
-    return () => clearTimeout(timer);
+    return () => unsubscribe();
   }, [user]);
 
   // Sync token usage to Firestore when it changes
   const syncTokenUsage = async (engine: 'gemini' | 'openai', input: number, output: number) => {
     if (!user) return;
-    const today = getTodayStr();
-    const usageRef = doc(db, 'users', user.uid, 'tokenUsage', today);
+    const currentMonth = getCurrentMonthStr();
+    const path = `users/${user.uid}/tokenUsage/${currentMonth}`;
+    const usageRef = doc(db, path);
     try {
       await setDoc(usageRef, {
         userId: user.uid,
-        date: today,
+        month: currentMonth,
         [engine]: {
           input: increment(input),
           output: increment(output)
@@ -777,7 +844,7 @@ export default function App() {
         updatedAt: serverTimestamp()
       }, { merge: true });
     } catch (err) {
-      console.error("Error syncing token usage:", err);
+      handleFirestoreError(err, OperationType.WRITE, path);
     }
   };
 
@@ -786,13 +853,13 @@ export default function App() {
     setIsDownloading(true);
     try {
       const usageCol = collection(db, 'users', user.uid, 'tokenUsage');
-      const q = query(usageCol, orderBy('date', 'desc'));
+      const q = query(usageCol, orderBy('month', 'desc'));
       const querySnapshot = await getDocs(q);
       
-      let csv = "Date,Gemini Input,Gemini Output,OpenAI Input,OpenAI Output\n";
+      let csv = "Month,Gemini Input,Gemini Output,OpenAI Input,OpenAI Output\n";
       querySnapshot.forEach((doc) => {
         const d = doc.data();
-        csv += `${d.date},${d.gemini.input},${d.gemini.output},${d.openai.input},${d.openai.output}\n`;
+        csv += `${d.month},${d.gemini?.input || 0},${d.gemini?.output || 0},${d.openai?.input || 0},${d.openai?.output || 0}\n`;
       });
 
       const blob = new Blob([csv], { type: 'text/csv' });
@@ -1162,7 +1229,7 @@ export default function App() {
       formattingDispatch({ type: 'SET_ALL_STYLES', styles: version.data.formatting.styles || {} });
     }
     
-    setActiveTab('config');
+    setActiveTab('build');
   };
 
   const toggleAudience = (id: string) => {
@@ -1356,7 +1423,34 @@ export default function App() {
         setOptimizationProgress(Math.min(95, (completedAudiences / currentAudiences.length) * 100));
         
         // Update token usage
-        if (data._usage && data._engine) {
+        if (data._engine === 'hybrid-v2') {
+          // Handle V2 Pipeline (OpenAI + Gemini)
+          if (data._usage) {
+            const openaiInput = data._usage.promptTokenCount || 0;
+            const openaiOutput = data._usage.candidatesTokenCount || 0;
+            setTokenUsage(prev => ({
+              ...prev,
+              openai: {
+                input: (prev.openai.input || 0) + openaiInput,
+                output: (prev.openai.output || 0) + openaiOutput
+              }
+            }));
+            syncTokenUsage('openai', openaiInput, openaiOutput);
+          }
+          if (data._geminiUsage) {
+            const geminiInput = data._geminiUsage.promptTokenCount || 0;
+            const geminiOutput = data._geminiUsage.candidatesTokenCount || 0;
+            setTokenUsage(prev => ({
+              ...prev,
+              gemini: {
+                input: (prev.gemini.input || 0) + geminiInput,
+                output: (prev.gemini.output || 0) + geminiOutput
+              }
+            }));
+            syncTokenUsage('gemini', geminiInput, geminiOutput);
+          }
+        } else if (data._usage && data._engine) {
+          // Handle Legacy Pipeline
           const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
           const inputDelta = data._usage!.promptTokenCount || 0;
           const outputDelta = data._usage!.candidatesTokenCount || 0;
@@ -1546,7 +1640,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
 
     try {
       // Small delay to allow React to re-render without highlights
-      await new Promise(resolve => setTimeout(resolve, 400));
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // Extract all styles from the document to ensure the PDF matches the preview
       const styles = Array.from(document.styleSheets)
@@ -1694,36 +1788,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   };
 
   const clearInputs = () => {
-    setResumeText('');
     setJobDescription('');
     setTargetRole('');
     setCompanyName('');
     setJobUrl('');
     setResults({});
     setActiveAudience(null);
-    setFileName(null);
     setSuitabilityResult(null);
-    setLinkedInUrl('');
-    setLinkedInPdfText('');
-    setLinkedInFileName('');
-    setCustomPrompt('');
-    setData({
-      personal_info: { 
-        name: '',
-        email: '',
-        phone: '',
-        location: '',
-        summary: '',
-        linkedin: '',
-        linkedinText: ''
-      },
-      experience: [],
-      skills: [],
-      education: [],
-      projects: [],
-      certifications: []
-    });
-    showToast("All inputs cleared.", "info");
+    showToast("Job details cleared.", "info");
   };
 
   const renderSimplifiedResume = () => {
@@ -2098,6 +2170,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     }
   };
 
+  if (showAdminDashboard) {
+    return <AdminDashboard onBack={() => setShowAdminDashboard(false)} isDarkMode={isDarkMode} />;
+  }
+
   return (
     <div className={`h-screen flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'} font-sans selection:bg-emerald-500/30`}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
@@ -2133,6 +2209,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             >
               <Maximize className="w-5 h-5" />
             </button>
+            {user?.email === 'hackerharnish@gmail.com' && (
+              <button
+                onClick={() => setShowAdminDashboard(true)}
+                className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'}`}
+                title="Admin Dashboard"
+              >
+                <BarChart3 className="w-5 h-5" />
+              </button>
+            )}
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
               className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-amber-400' : 'hover:bg-black/5 text-blue-600'}`}
@@ -2158,7 +2243,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         >
           <div className={`sticky top-0 z-20 p-2 md:p-4 border-b ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'}`}>
             <div className="flex gap-1 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
-                      {(['config', 'profile', 'style', 'tools', 'guide'] as const).map((tab) => (
+                      {(['build', 'profile', 'style', 'assets', 'guide'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab)}
@@ -2168,20 +2253,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/60 hover:text-black')
                           }`}
                         >
-                          {tab}
+                          {tab === 'assets' ? 'Assets' : tab}
                         </button>
                       ))}
                     </div>
           </div>
           
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 md:p-4 space-y-6">
-            {activeTab === 'config' && (
+            {activeTab === 'build' && (
                 <div className="space-y-6">
                   <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center gap-2">
                         <Layout className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
-                        <h2 className="font-semibold text-lg">Configuration</h2>
+                        <h2 className="font-semibold text-lg">Builder</h2>
                       </div>
                       <button 
                         onClick={clearInputs}
@@ -2466,10 +2551,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10' : 'bg-white text-black/60 border-black/5 hover:bg-black/5')
                                   }`}
                                 >
-                                  {eng === 'production' ? 'Auto' : eng}
+                                  {eng === 'production' ? 'Hybrid' : eng}
                                 </button>
                               ))}
                             </div>
+                            {selectedEngine === 'production' && (
+                              <p className="mt-3 text-[10px] opacity-50 italic leading-relaxed">
+                                Hybrid mode intelligently routes tasks: Gemini handles extraction, parsing, and scoring (cost-effective), while OpenAI handles creative rewriting and complex analysis (premium quality).
+                              </p>
+                            )}
                           </div>
 
                           <div className="space-y-8">
@@ -2497,12 +2587,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                    )}
                                    {selectedEngine === 'openai' && (
                                      <>
-                                       <option value="gpt-5.4">GPT-5.4 (Latest)</option>
-                                       <option value="gpt-5.4-mini">GPT-5.4 mini</option>
-                                       <option value="o1">o1 (Reasoning)</option>
-                                       <option value="o3-mini">o3-mini</option>
-                                       <option value="gpt-4o">GPT-4o</option>
-                                       <option value="gpt-4o-mini">GPT-4o-mini</option>
+                                       <option value="gpt-4o">GPT-4o (Premium)</option>
+                                       <option value="gpt-4o-mini">GPT-4o-mini (Fast)</option>
+                                       <option value="o1-preview">o1-preview (Reasoning)</option>
+                                       <option value="o1-mini">o1-mini (Reasoning Fast)</option>
                                      </>
                                    )}
                                  </select>
@@ -2592,7 +2680,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       <div>
                         <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Job Description</label>
                         <div className="space-y-3">
-                          <div className="flex gap-2">
+                          <div className="flex flex-col sm:flex-row gap-2">
                             <input 
                               type="url"
                               placeholder="Job Posting URL (Optional)"
@@ -2605,7 +2693,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             <button
                               onClick={handleFetchJobDescription}
                               disabled={!jobUrl || isFetchingJob}
-                              className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 ${
+                              className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 min-w-[100px] ${
                                 isFetchingJob || !jobUrl
                                   ? (isDarkMode ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-black/5 text-black/30 cursor-not-allowed')
                                   : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20'
@@ -2781,10 +2869,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             {/* Token Usage Display */}
                             <div className={`mt-4 p-3 rounded-xl border ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/5'}`}>
                               <div className="flex justify-between items-center mb-3">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 w-full">
                                   <Cpu className="w-3 h-3 opacity-50" />
-                                  <div className="flex items-center justify-between mb-4">
-                                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
+                                  <div className="flex items-center justify-between w-full">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
+                                      <button 
+                                        onClick={fetchTokenUsageManual}
+                                        disabled={isRefreshingTokens}
+                                        className={`p-1 rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${isRefreshingTokens ? 'animate-spin opacity-50' : 'opacity-50 hover:opacity-100'}`}
+                                        title="Refresh Token Usage"
+                                      >
+                                        <RefreshCw className="w-2.5 h-2.5" />
+                                      </button>
+                                    </div>
                                     <button 
                                       onClick={generateTokenReport}
                                       disabled={isDownloading}
@@ -2795,6 +2893,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     </button>
                                   </div>
                                 </div>
+                              </div>
+                              <div className="flex justify-end mb-2">
                                 <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{selectedEngine === 'production' ? 'Hybrid Mode' : selectedEngine}</span>
                               </div>
                               
@@ -3394,7 +3494,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   </div>
                 </div>
               )}
-              {activeTab === 'tools' && (
+              {activeTab === 'assets' && (
                 <div className="space-y-6">
                   <StatusIndicator
                     resumeText={getEffectiveResumeText()}
@@ -3607,6 +3707,35 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     {kw}
                                   </span>
                                 ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {results[activeAudience]._intermediateData && (
+                            <div className="space-y-2 mt-4 pt-4 border-t border-black/10 dark:border-white/10">
+                              <h4 className="font-bold text-purple-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                                Hybrid Pipeline Data (Gemini Extracted)
+                              </h4>
+                              <div className="space-y-2">
+                                <div>
+                                  <span className="font-semibold opacity-70">Extracted JD Keywords:</span>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {results[activeAudience]._intermediateData.jdKeywords?.map((kw: string, i: number) => (
+                                      <span key={i} className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 text-[10px]">
+                                        {kw}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div>
+                                  <span className="font-semibold opacity-70">Parsed Resume Roles:</span>
+                                  <ul className="list-disc pl-5 mt-1 opacity-80">
+                                    {results[activeAudience]._intermediateData.resumeData?.experience?.map((exp: any, i: number) => (
+                                      <li key={i}>{exp.role} at {exp.company}</li>
+                                    ))}
+                                  </ul>
+                                </div>
                               </div>
                             </div>
                           )}
