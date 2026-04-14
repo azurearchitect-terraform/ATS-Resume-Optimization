@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "AI Resume ATS Autofill",
+  "version": "1.0",
+  "description": "Autofills Workday, Greenhouse, and Lever job applications with your AI optimized resume data.",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}

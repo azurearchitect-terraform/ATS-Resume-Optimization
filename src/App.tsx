@@ -3503,6 +3503,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     isDarkMode={isDarkMode} 
                     engineConfig={engineConfig} 
                     selectedEngine={selectedEngine as any} 
+                    resumeData={results[activeAudience]}
                   />
                 </div>
               )}
