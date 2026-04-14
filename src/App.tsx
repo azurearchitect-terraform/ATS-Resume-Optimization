@@ -45,6 +45,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableSection } from './components/SortableSection';
+import { CareerTools } from './components/CareerTools';
 import { AdditionalTools } from './components/AdditionalTools';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
@@ -460,7 +461,7 @@ export default function App() {
     return "";
   });
   const [jobDescription, setJobDescription] = useState('');
-  const [activeTab, setActiveTab] = useState<'build' | 'style' | 'assets' | 'profile' | 'guide'>('build');
+  const [activeTab, setActiveTab] = useState<'build' | 'style' | 'assets' | 'profile' | 'tools'>('build');
   const [targetRole, setTargetRole] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
@@ -1331,6 +1332,11 @@ export default function App() {
       return;
     }
 
+    if (!targetRole.trim() || !companyName.trim()) {
+      setError('Target Role and Company Name are mandatory.');
+      return;
+    }
+
     if (!jobDescription && !jobUrl) {
       setError('Please provide a job description or job URL to optimize against.');
       return;
@@ -1483,12 +1489,35 @@ export default function App() {
           
           return newResults;
         });
+
+        return data;
       });
 
-      await Promise.all(optimizationPromises);
+      const optimizationResults = await Promise.all(optimizationPromises);
+      const matchScore = optimizationResults[0]?.match_score || 0;
       
       // Save version immediately after optimization
-      saveResumeVersion(`Optimized - ${companyName || 'Resume'} - ${new Date().toLocaleString()}`);
+      saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
+
+      // Sync to Job Tracker
+      try {
+        const savedJobs = localStorage.getItem('ai_job_tracker');
+        const jobs = savedJobs ? JSON.parse(savedJobs) : [];
+        const newJob = {
+          id: Date.now().toString(),
+          company: companyName,
+          role: targetRole,
+          salary: 'Not specified',
+          skills: [],
+          status: 'Saved',
+          dateAdded: Date.now(),
+          jd: jobDescription || jobUrl || '',
+          score: matchScore
+        };
+        localStorage.setItem('ai_job_tracker', JSON.stringify([newJob, ...jobs]));
+      } catch (e) {
+        console.error("Failed to sync to Job Tracker", e);
+      }
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Optimization aborted');
@@ -2224,7 +2253,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             >
               {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
-            <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-2.0.0 - STABLE</span>
+            <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0 - STABLE</span>
           </div>
         </div>
       </header>
@@ -2243,7 +2272,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         >
           <div className={`sticky top-0 z-20 p-2 md:p-4 border-b ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'}`}>
             <div className="flex gap-1 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
-                      {(['build', 'profile', 'style', 'assets', 'guide'] as const).map((tab) => (
+                      {(['build', 'profile', 'style', 'assets', 'tools'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab)}
@@ -2276,10 +2305,32 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
+
+                    {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
+                      <div className={`mb-6 p-4 rounded-xl border flex items-center justify-between ${isDarkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}>
+                        <div>
+                          <h3 className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Match Score</h3>
+                          <p className={`text-[10px] mt-1 ${isDarkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>Based on current JD</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {results[activeAudience].baseline_score !== undefined && (
+                            <div className="text-right">
+                              <span className={`text-[10px] uppercase tracking-widest opacity-60 block`}>Old</span>
+                              <span className={`font-bold text-lg opacity-60 line-through`}>{results[activeAudience].baseline_score}%</span>
+                            </div>
+                          )}
+                          <div className="text-right">
+                            <span className={`text-[10px] uppercase tracking-widest text-emerald-500 block`}>New</span>
+                            <span className={`font-bold text-2xl text-emerald-500`}>{results[activeAudience].match_score}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-4">
                       {/* Target Role */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Target Role (Optional)</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Target Role *</label>
                         <div className="relative">
                           <Target className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-30`} />
                           <input 
@@ -2295,7 +2346,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       </div>
                       {/* Company Name */}
                       <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Company Name (Optional)</label>
+                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Company Name *</label>
                         <div className="relative">
                           <Building className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-30`} />
                           <input 
@@ -3227,54 +3278,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   </section>
                 </div>
               )}
-              {activeTab === 'guide' && (
-                <div className="space-y-6">
-                  <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
-                    <div className="flex items-center gap-2 mb-6">
-                      <HelpCircle className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
-                      <h2 className="font-semibold text-lg">User Guide</h2>
-                    </div>
-                    <div className="space-y-6">
-                      <div className="space-y-2">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">1. Configuration</h3>
-                        <p className="text-[11px] leading-relaxed opacity-70">
-                          Start by uploading your current resume (PDF) or use the default Master Resume. Paste the Job Description of the role you're targeting. Select your target role and optimization mode.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">2. Profile Customization</h3>
-                        <p className="text-[11px] leading-relaxed opacity-70">
-                          Use the <strong>Profile</strong> tab to override your personal details. You can even set a custom display text for your LinkedIn link to keep it clean (e.g., "HarnishJariwala" instead of the full URL).
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">3. Optimization</h3>
-                        <p className="text-[11px] leading-relaxed opacity-70">
-                          Click <strong>Optimize Resume</strong> to let the AI rewrite your resume. It will align your skills and experience with the job description while maintaining a professional 2-page layout.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">4. Advanced Tools</h3>
-                        <div className="text-[11px] leading-relaxed opacity-70">
-                          Check the <strong>Tools</strong> tab for:
-                          <ul className="list-disc list-inside mt-1 space-y-1">
-                            <li><strong>Gap Analysis:</strong> See which skills are missing.</li>
-                            <li><strong>Interview Prep:</strong> Generate likely interview questions.</li>
-                            <li><strong>Cover Letter:</strong> Create a tailored cover letter instantly.</li>
-                            <li><strong>Versions:</strong> Save and restore different versions of your resume.</li>
-                          </ul>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-500">5. Styling & Export</h3>
-                        <p className="text-[11px] leading-relaxed opacity-70">
-                          Customize fonts, colors, and layout in the <strong>Style</strong> tab. Once satisfied, use the <strong>Download PDF</strong> button to save your professional resume.
-                        </p>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-              )}
               {activeTab === 'style' && (
                 <div className="space-y-6">
                   {/* Resume Structure */}
@@ -3494,6 +3497,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   </div>
                 </div>
               )}
+              {activeTab === 'tools' && (
+                <div className="space-y-6">
+                  <CareerTools 
+                    isDarkMode={isDarkMode} 
+                    engineConfig={engineConfig} 
+                    selectedEngine={selectedEngine as any} 
+                  />
+                </div>
+              )}
               {activeTab === 'assets' && (
                 <div className="space-y-6">
                   <StatusIndicator
@@ -3708,6 +3720,16 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   </span>
                                 ))}
                               </div>
+                            </div>
+                          )}
+
+                          {results[activeAudience].why_this_job && (
+                            <div className="space-y-2 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
+                              <h4 className="font-bold text-emerald-500 flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Why This Job? (Recruiter Response)
+                              </h4>
+                              <p className="italic">"{results[activeAudience].why_this_job}"</p>
                             </div>
                           )}
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline } from '../services/geminiService';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob } from '../services/geminiService';
 
 interface AdditionalToolsProps {
   resumeText: string;
@@ -39,12 +39,13 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
   resumeSummary = "",
   keySkills = []
 }) => {
-  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline'>('skillGap');
+  const [activeTab, setActiveTab] = useState<'skillGap' | 'interview' | 'history' | 'coverLetter' | 'recruiterMessage' | 'headline' | 'whyThisJob'>('skillGap');
   const [headlineResult, setHeadlineResult] = useState<{headline: string, keywords_used: string[]} | null>(null);
   const [skillGap, setSkillGap] = useState<{missing: string[], present: string[]} | null>(null);
   const [interviewQuestions, setInterviewQuestions] = useState<string[]>([]);
   const [coverLetter, setCoverLetter] = useState<string>('');
   const [recruiterMessage, setRecruiterMessage] = useState<string>('');
+  const [whyThisJob, setWhyThisJob] = useState<string>('');
   const [history, setHistory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,8 +101,13 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
         // If missing from results but we are on the tab, try to run it automatically
         runSkillGap();
       }
+
+      // If we have why_this_job from results, use it
+      if (res.why_this_job && !whyThisJob) {
+        setWhyThisJob(res.why_this_job);
+      }
     }
-  }, [activeAudience, currentResults, activeTab, isLoading, skillGap]);
+  }, [activeAudience, currentResults, activeTab, isLoading, skillGap, whyThisJob]);
 
   useEffect(() => {
     const loadHistory = () => {
@@ -154,6 +160,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Failed to generate interview questions.");
+    }
+    setIsLoading(false);
+  };
+
+  const runWhyThisJob = async () => {
+    if (!resumeText || !jobDescription) {
+      setError("Please ensure both resume and job description are provided.");
+      return;
+    }
+    setError(null);
+    setIsLoading(true);
+    try {
+      const result = await generateWhyThisJob(jobDescription, resumeText, {
+        mode: selectedEngine,
+        geminiConfig: {
+          engine: 'gemini',
+          model: engineConfig.gemini.model,
+          apiKey: engineConfig.gemini.apiKey
+        },
+        openaiConfig: {
+          engine: 'openai',
+          model: engineConfig.openai.model,
+          apiKey: engineConfig.openai.apiKey
+        }
+      });
+      setWhyThisJob(result);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "Failed to generate Why This Job response.");
     }
     setIsLoading(false);
   };
@@ -405,6 +440,21 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           </div>
           <span className="text-[9px] opacity-70 text-left leading-tight">Short LinkedIn outreach</span>
         </button>
+
+        <button 
+          onClick={() => setActiveTab('whyThisJob')} 
+          className={`flex flex-col items-start gap-2 p-3 rounded-xl transition-all border ${
+            activeTab === 'whyThisJob' 
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
+              : (isDarkMode ? 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10 hover:text-white' : 'bg-black/5 border-black/5 text-black/60 hover:bg-black/10 hover:text-black')
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4"/>
+            <span className="text-[11px] font-bold">Why This Job?</span>
+          </div>
+          <span className="text-[9px] opacity-70 text-left leading-tight">Response for recruiters</span>
+        </button>
       </div>
 
       {error && (
@@ -555,6 +605,35 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
                 <button 
                   onClick={() => {
                     navigator.clipboard.writeText(recruiterMessage);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
+                >
+                  <Copy className="w-3 h-3" />
+                  Copy Text
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {activeTab === 'whyThisJob' && (
+        <div className="space-y-4">
+          <button 
+            onClick={runWhyThisJob} 
+            disabled={isLoading} 
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold py-3 rounded-xl text-xs transition-colors"
+          >
+            {isLoading ? 'Generating...' : 'Generate Response'}
+          </button>
+          {whyThisJob && (
+            <div className="space-y-2">
+              <div className={`p-4 rounded-lg border text-[10px] leading-relaxed whitespace-pre-wrap ${isDarkMode ? 'bg-white/5 border-white/10' : 'bg-gray-50 border-black/5'}`}>
+                {whyThisJob}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(whyThisJob);
                   }}
                   className="flex-1 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold transition-all"
                 >

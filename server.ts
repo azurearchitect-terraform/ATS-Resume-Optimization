@@ -650,7 +650,8 @@ async function startServer() {
            - The third role MUST have exactly 5 bullet points.
            - The fourth role MUST have exactly 3 bullet points.
            - ALL other roles (5th and older) MUST have at least 3 bullet points each.
-        5. Return ONLY a valid JSON object matching the standard OptimizationResult schema.
+        5. WHY THIS JOB: Generate a compelling 100-150 word response to the question "What thrilled you to apply for this job?" based on the JD and resume.
+        6. Return ONLY a valid JSON object matching the standard OptimizationResult schema.
         
         OUTPUT SCHEMA (MUST MATCH EXACTLY):
         {
@@ -668,6 +669,7 @@ async function startServer() {
           "baseline_score": 60,
           "improvement_notes": ["string"],
           "audience_alignment_notes": "string",
+          "why_this_job": "string",
           "rejection_reasons": ["string"]
         }
       `;

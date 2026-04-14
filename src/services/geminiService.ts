@@ -36,6 +36,7 @@ export interface OptimizationResult {
   baseline_score: number;
   improvement_notes: string[];
   audience_alignment_notes: string;
+  why_this_job?: string;
   rejection_reasons?: string[];
   _usage?: {
     promptTokenCount: number;
@@ -625,6 +626,8 @@ export async function generateCoverLetter(
       The cover letter should be professional, concise (max 300-400 words), and specifically highlight how the candidate's experience aligns with the job requirements.
       Focus on the value the candidate brings to the company.
       
+      CRITICAL: You MUST identify the company name from the job description and use it throughout the letter. Do not use placeholders like "[Company Name]". If the company name is not explicitly clear, use a generic but professional reference like "the team at your organization".
+      
       JOB DESCRIPTION: ${jobDescription}
       RESUME: ${resumeText}
       TARGET ROLE: ${targetRole}
@@ -680,6 +683,33 @@ export async function analyzeLinkedInProfile(
   } catch (error) {
     console.error("Error analyzing LinkedIn profile:", error);
     throw error;
+  }
+}
+
+export async function generateWhyThisJob(
+  jobDescription: string,
+  resumeText: string,
+  config: RouterConfig
+): Promise<string> {
+  const routedConfig = routeTask('recruiter_message', config);
+  const prompt = `
+      You are a career strategist.
+      Recruiters often ask "Why did you apply for this job?" or "What thrilled you about this role?".
+      Based on the job description and the candidate's resume, draft a compelling, authentic response (max 150 words).
+      Focus on the specific alignment between the company's mission/needs and the candidate's passions/skills.
+      
+      JOB DESCRIPTION: ${jobDescription}
+      RESUME: ${resumeText}
+      
+      Return the response as a plain text string. Do not include any extra conversational text.
+    `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    return (data.result || "").trim();
+  } catch (error) {
+    console.error("Error generating Why This Job response:", error);
+    return "";
   }
 }
 
