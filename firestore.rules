@@ -38,6 +38,13 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
+    // Check if user is an admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             ( (request.auth.token.email == "hackerharnish@gmail.com" && request.auth.token.email_verified == true) ||
+               (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') );
+    }
+
     // Validate required fields exist
     function hasRequiredFields(fields) {
       return request.resource.data.keys().hasAll(fields);
@@ -109,6 +116,14 @@ service cloud.firestore {
         allow create, update: if isOwner(userId) && 
                               isValidTokenUsage(request.resource.data, userId);
       }
+    }
+
+    match /analytics/{logId} {
+      // Only admins should be able to read analytics
+      allow read: if isAdmin();
+      // Allow authenticated users to log their own usage
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
     }
   }
 }

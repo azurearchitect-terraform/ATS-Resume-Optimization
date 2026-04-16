@@ -54,6 +54,8 @@ export interface OptimizationResult {
   };
   _engine?: string;
   _model?: string;
+  _cacheHit?: boolean;
+  _cost?: number;
 }
 
 export type EngineType = 'gemini' | 'openai';
@@ -311,8 +313,26 @@ export async function optimizeResume(
           else formattedSkills[`Category ${Object.keys(formattedSkills).length + 1}`] = [];
         }
         parsed.skills = formattedSkills;
+        
+        // Apply title fix to V2 results as well
+        const fixTitle = (obj: any): any => {
+          if (typeof obj === 'string') {
+            return obj.replace(/Office IT [Cc]um Logistics/g, 'Officer IT cum Logistics');
+          }
+          if (Array.isArray(obj)) {
+            return obj.map(fixTitle);
+          }
+          if (obj !== null && typeof obj === 'object') {
+            const newObj: any = {};
+            for (const key in obj) {
+              newObj[key] = fixTitle(obj[key]);
+            }
+            return newObj;
+          }
+          return obj;
+        };
 
-        return parsed;
+        return fixTitle(parsed);
       }
     } catch (e) {
       console.warn("V2 Pipeline failed, falling back to legacy optimization:", e);
@@ -326,7 +346,7 @@ ${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejec
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 
 STRICT RULES:
-- PRESERVE TITLES: Do not change job titles (e.g. "Officer IT cum Logistics" stays exactly as is).
+- PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
 - INCLUDE ALL ROLES: Do not skip older roles. Include every role present in the input.
 - MAX 2 PAGES: Content must fit A4 layout (794x1123px).
 - TONE: Professional, human-like. Avoid AI clichés (spearheaded, synergized, etc.).
@@ -416,6 +436,7 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         // FAIL-SAFE: Ensure "Officer IT cum Logistics" is preserved and not changed to "Office IT cum Logistics"
         const fixTitle = (obj: any): any => {
           if (typeof obj === 'string') {
+            // Case insensitive match but replace with exact casing
             return obj.replace(/Office IT [Cc]um Logistics/g, 'Officer IT cum Logistics');
           }
           if (Array.isArray(obj)) {

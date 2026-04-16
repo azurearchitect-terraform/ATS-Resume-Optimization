@@ -50,7 +50,7 @@ import { AdditionalTools } from './components/AdditionalTools';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING } from './constants';
-import { downloadDOCX } from './services/exportService';
+import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
 import { ResumeData, SuitabilityResult } from './types';
 import { detectOverflow } from './overflowDetection';
@@ -63,7 +63,7 @@ import { saveAs } from 'file-saver';
 
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy, increment, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy, increment, onSnapshot } from 'firebase/firestore';
 import { handleFirestoreError } from './lib/firebaseUtils';
 import { OperationType } from './types';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -97,6 +97,7 @@ export default function App() {
     return localStorage.getItem('isAutosaveEnabled') === 'true';
   });
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+  const [lastJobId, setLastJobId] = useState<string | null>(() => sessionStorage.getItem('lastJobId'));
 
   useEffect(() => {
     // Clean up URL parameters if they exist (like ?origin=...)
@@ -1312,6 +1313,17 @@ export default function App() {
     }
   };
 
+  const logUsageToFirestore = async (log: any) => {
+    try {
+      await addDoc(collection(db, 'analytics'), {
+        ...log,
+        timestamp: serverTimestamp()
+      });
+    } catch (e) {
+      console.error("Failed to log usage to Firestore", e);
+    }
+  };
+
   const handleOptimize = async () => {
     console.log("handleOptimize called");
     setError("Optimization started...");
@@ -1454,7 +1466,35 @@ export default function App() {
               }
             }));
             syncTokenUsage('gemini', geminiInput, geminiOutput);
+
+            // Log Gemini usage to analytics
+            logUsageToFirestore({
+              userId: user?.uid || 'anonymous',
+              model: 'gemini-3-flash-preview',
+              inputTokens: geminiInput,
+              outputTokens: geminiOutput,
+              totalTokens: data._geminiUsage.totalTokenCount || (geminiInput + geminiOutput),
+              cacheHit: false,
+              endpoint: '/api/v2/optimize',
+              cost: (geminiInput / 1000000 * 0.075) + (geminiOutput / 1000000 * 0.30)
+            });
           }
+          
+          // Log main model usage
+          const inputDelta = data._usage?.promptTokenCount || 0;
+          const outputDelta = data._usage?.candidatesTokenCount || 0;
+          const model = data._model || engineConfig[selectedEngine].model;
+          
+          logUsageToFirestore({
+            userId: user?.uid || 'anonymous',
+            model: model,
+            inputTokens: inputDelta,
+            outputTokens: outputDelta,
+            totalTokens: data._usage?.totalTokenCount || (inputDelta + outputDelta),
+            cacheHit: !!data._cacheHit,
+            endpoint: '/api/v2/optimize',
+            cost: data._cost || 0
+          });
         } else if (data._usage && data._engine) {
           // Handle Legacy Pipeline
           const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
@@ -1499,24 +1539,48 @@ export default function App() {
       // Save version immediately after optimization
       saveResumeVersion(`Optimized - ${companyName} - ${new Date().toLocaleString()}`);
 
-      // Sync to Job Tracker
-      try {
-        const savedJobs = localStorage.getItem('ai_job_tracker');
-        const jobs = savedJobs ? JSON.parse(savedJobs) : [];
-        const newJob = {
-          id: Date.now().toString(),
-          company: companyName,
-          role: targetRole,
-          salary: 'Not specified',
-          skills: [],
-          status: 'Saved',
-          dateAdded: Date.now(),
-          jd: jobDescription || jobUrl || '',
-          score: matchScore
-        };
-        localStorage.setItem('ai_job_tracker', JSON.stringify([newJob, ...jobs]));
-      } catch (e) {
-        console.error("Failed to sync to Job Tracker", e);
+      // Sync to Job Tracker (Firestore)
+      if (user) {
+        try {
+          const docRef = await addDoc(collection(db, 'users', user.uid, 'jobs'), {
+            company: companyName || 'Unknown Company',
+            role: targetRole || 'Professional Candidate',
+            salary: 'Not specified',
+            skills: [],
+            status: 'Saved',
+            dateAdded: Date.now(),
+            jd: jobDescription || jobUrl || '',
+            score: matchScore,
+            updatedAt: serverTimestamp()
+          });
+          setLastJobId(docRef.id);
+          sessionStorage.setItem('lastJobId', docRef.id);
+        } catch (e) {
+          console.error("Failed to sync to Job Tracker (Firestore)", e);
+        }
+      } else {
+        // Fallback to localStorage for guest users
+        try {
+          const savedJobs = localStorage.getItem('ai_job_tracker');
+          const jobs = savedJobs ? JSON.parse(savedJobs) : [];
+          const newId = Date.now().toString();
+          const newJob = {
+            id: newId,
+            company: companyName,
+            role: targetRole,
+            salary: 'Not specified',
+            skills: [],
+            status: 'Saved',
+            dateAdded: Date.now(),
+            jd: jobDescription || jobUrl || '',
+            score: matchScore
+          };
+          localStorage.setItem('ai_job_tracker', JSON.stringify([newJob, ...jobs]));
+          setLastJobId(newId);
+          sessionStorage.setItem('lastJobId', newId);
+        } catch (e) {
+          console.error("Failed to sync to Job Tracker", e);
+        }
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -1654,12 +1718,47 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     };
   }, [isResizingWidth]);
 
+  const syncJobTrackerApplied = async () => {
+    if (!lastJobId) return;
+
+    if (user) {
+      try {
+        const jobRef = doc(db, 'users', user.uid, 'jobs', lastJobId);
+        await updateDoc(jobRef, {
+          status: 'Applied',
+          appliedDate: Date.now(),
+          updatedAt: serverTimestamp()
+        });
+        showToast("Job status updated to Applied in Tracker", "success");
+      } catch (e) {
+        console.error("Failed to update job status in Firestore", e);
+      }
+    } else {
+      try {
+        const savedJobs = localStorage.getItem('ai_job_tracker');
+        if (savedJobs) {
+          const jobs = JSON.parse(savedJobs);
+          const updatedJobs = jobs.map((j: any) => 
+            j.id === lastJobId ? { ...j, status: 'Applied', appliedDate: Date.now() } : j
+          );
+          localStorage.setItem('ai_job_tracker', JSON.stringify(updatedJobs));
+          showToast("Job status updated to Applied in Tracker", "success");
+        }
+      } catch (e) {
+        console.error("Failed to update job status in localStorage", e);
+      }
+    }
+  };
+
   const downloadPDF = async () => {
     const element = document.getElementById('resume-container');
     if (!element) return;
 
     // Save version automatically
     saveResumeVersion();
+
+    // Sync to Job Tracker as Applied
+    syncJobTrackerApplied();
 
 
     // Temporarily clear active section for clean PDF
@@ -1810,6 +1909,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   const handleDownloadDOCX = async () => {
     const res = results[activeAudience!] || data;
     await downloadDOCX(res, targetRole, companyName, showToast);
+    
+    // Sync to Job Tracker as Applied
+    syncJobTrackerApplied();
   };
 
   const copyToClipboard = (text: string) => {
@@ -2297,13 +2399,27 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         <Layout className={`w-5 h-5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
                         <h2 className="font-semibold text-lg">Builder</h2>
                       </div>
-                      <button 
-                        onClick={clearInputs}
-                        className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-white/5 text-white/40 hover:text-red-400' : 'hover:bg-black/5 text-black/40 hover:text-red-600'}`}
-                        title="Clear all inputs"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => downloadJSON(activeAudience ? results[activeAudience] : data, targetRole, companyName, showToast)}
+                          className={`p-2 rounded-lg transition-colors flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest ${
+                            isDarkMode 
+                              ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20' 
+                              : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-200'
+                          }`}
+                          title="Export Resume to JSON"
+                        >
+                          <Download className="w-3 h-3" />
+                          JSON
+                        </button>
+                        <button 
+                          onClick={clearInputs}
+                          className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-white/5 text-white/40 hover:text-red-400' : 'hover:bg-black/5 text-black/40 hover:text-red-600'}`}
+                          title="Clear all inputs"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
 
                     {activeAudience && results[activeAudience] && results[activeAudience].match_score !== undefined && (
@@ -3504,6 +3620,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     engineConfig={engineConfig} 
                     selectedEngine={selectedEngine as any} 
                     resumeData={results[activeAudience]}
+                    user={user}
                   />
                 </div>
               )}

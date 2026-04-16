@@ -89,9 +89,31 @@
         "updatedAt": { "type": "timestamp" }
       },
       "required": ["userId", "month", "gemini", "openai"]
+    },
+    "AnalyticsLog": {
+      "title": "AnalyticsLog",
+      "description": "Stores individual usage logs for analytics.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "model": { "type": "string" },
+        "inputTokens": { "type": "number" },
+        "outputTokens": { "type": "number" },
+        "totalTokens": { "type": "number" },
+        "cacheHit": { "type": "boolean" },
+        "endpoint": { "type": "string" },
+        "timestamp": { "type": "timestamp" },
+        "cost": { "type": "number" }
+      }
     }
   },
   "firestore": {
+    "/analytics/{logId}": {
+      "schema": {
+        "$ref": "#/entities/AnalyticsLog"
+      },
+      "description": "Collection of usage logs."
+    },
     "/users/{userId}": {
       "schema": {
         "$ref": "#/entities/UserProfile"

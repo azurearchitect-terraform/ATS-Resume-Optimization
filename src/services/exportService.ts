@@ -164,3 +164,18 @@ export const downloadDOCX = async (res: any, targetRole: string, companyName: st
     showToast('Failed to generate DOCX. Please try again.', 'error');
   }
 };
+
+export const downloadJSON = (res: any, targetRole: string, companyName: string, showToast: (msg: string, type: any) => void) => {
+  if (!res) return;
+  try {
+    const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+    const role = targetRole || 'Resume';
+    const company = companyName ? `-${companyName}` : '';
+    const fileName = `${role}${company}_Harnish Jariwala.json`;
+    saveAs(blob, fileName);
+    showToast('JSON Exported successfully!', 'success');
+  } catch (err: any) {
+    console.error('JSON Export Error:', err);
+    showToast('Failed to export JSON.', 'error');
+  }
+};

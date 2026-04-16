@@ -17,13 +17,23 @@ export const ATSAutofillHelper: React.FC<ATSAutofillHelperProps> = ({ isDarkMode
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const downloadExtension = () => {
-    const link = document.createElement('a');
-    link.href = '/extension.zip';
-    link.download = 'AI_Resume_ATS_Autofill.zip';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const downloadExtension = async () => {
+    try {
+      const response = await fetch('/extension.zip');
+      if (!response.ok) throw new Error('Network response was not ok');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'AI_Resume_ATS_Autofill.zip';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+      alert('Failed to download the extension. Please try again or check your connection.');
+    }
   };
 
   const renderField = (label: string, value: string | undefined, id: string) => {
@@ -79,6 +89,45 @@ export const ATSAutofillHelper: React.FC<ATSAutofillHelperProps> = ({ isDarkMode
     return JSON.stringify(payload, null, 2);
   };
 
+  const getBookmarkletCode = () => {
+    const code = `javascript:(function(){
+      const json = prompt('Paste your Resume JSON payload here:');
+      if(!json) return;
+      try {
+        const data = JSON.parse(json);
+        const mappings = {
+          'first_name': ['first', 'fname', 'given-name'],
+          'last_name': ['last', 'lname', 'family-name'],
+          'email': ['email', 'mail'],
+          'phone': ['phone', 'mobile', 'tel'],
+          'linkedin': ['linkedin'],
+          'github': ['github'],
+          'portfolio': ['portfolio', 'website']
+        };
+        
+        const inputs = document.querySelectorAll('input, textarea, select');
+        inputs.forEach(input => {
+          const name = (input.name || '').toLowerCase();
+          const id = (input.id || '').toLowerCase();
+          const label = (input.getAttribute('aria-label') || '').toLowerCase();
+          const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+          const combined = name + id + label + placeholder;
+
+          if (data.firstName && mappings.first_name.some(k => combined.includes(k))) input.value = data.firstName;
+          if (data.lastName && mappings.last_name.some(k => combined.includes(k))) input.value = data.lastName;
+          if (data.email && mappings.email.some(k => combined.includes(k))) input.value = data.email;
+          if (data.phone && mappings.phone.some(k => combined.includes(k))) input.value = data.phone;
+          if (data.linkedin && mappings.linkedin.some(k => combined.includes(k))) input.value = data.linkedin;
+          
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        alert('Autofill complete! Please review the fields.');
+      } catch(e) { alert('Invalid JSON payload. Please copy it again from the app.'); }
+    })();`.replace(/\s+/g, ' ');
+    return code;
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-4 mb-6">
@@ -94,74 +143,114 @@ export const ATSAutofillHelper: React.FC<ATSAutofillHelperProps> = ({ isDarkMode
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column: Browser Extension */}
-        <div className="space-y-6">
-          <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-[#1a1a1a] border-white/10' : 'bg-white border-black/10'}`}>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {/* Column 1: Browser Extension */}
+        <div className="space-y-6 flex flex-col">
+          <div className={`p-5 rounded-2xl border flex-1 ${isDarkMode ? 'bg-[#1a1a1a] border-white/10' : 'bg-white border-black/10'}`}>
             <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
               <ExternalLink className="w-5 h-5 text-emerald-500" />
-              1. Browser Extension (Recommended)
+              1. Browser Extension
             </h3>
-            <p className="text-sm opacity-70 mb-4">
-              Install our Chrome extension to automatically inject your optimized resume data directly into Workday and Greenhouse forms with one click.
+            <p className="text-xs opacity-70 mb-4">
+              Best for frequent users. Requires "Developer Mode" in Chrome.
             </p>
             
-            <div className={`p-4 rounded-xl mb-4 text-sm ${isDarkMode ? 'bg-blue-500/10 text-blue-200' : 'bg-blue-50 text-blue-800'}`}>
-              <h4 className="font-bold mb-2">How to install:</h4>
+            <div className={`p-4 rounded-xl mb-4 text-[11px] ${isDarkMode ? 'bg-blue-500/10 text-blue-200' : 'bg-blue-50 text-blue-800'}`}>
+              <h4 className="font-bold mb-2">Installation:</h4>
               <ol className="list-decimal list-inside space-y-1 opacity-80 mb-4">
-                <li>Download the extension files.</li>
-                <li>Extract the downloaded ZIP file.</li>
-                <li>Open Chrome and go to <code>chrome://extensions/</code></li>
-                <li>Enable <strong>Developer mode</strong> (top right).</li>
-                <li>Click <strong>Load unpacked</strong> and select the extracted folder.</li>
+                <li>Download and Extract ZIP.</li>
+                <li>Go to <code>chrome://extensions/</code></li>
+                <li>Enable <strong>Developer mode</strong>.</li>
+                <li>Click <strong>Load unpacked</strong>.</li>
               </ol>
               <button 
                 onClick={downloadExtension}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-bold text-xs"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-bold"
               >
                 <Download className="w-4 h-4" />
-                Download Extension ZIP
+                Download ZIP
               </button>
             </div>
 
             <div className="space-y-3">
-              <h4 className="font-bold text-sm">Your Data Payload:</h4>
-              <p className="text-xs opacity-70">Copy this JSON and paste it into the extension popup when you are on a job application page.</p>
+              <h4 className="font-bold text-xs">Your Data Payload:</h4>
               <div className="relative">
                 <textarea 
                   readOnly 
                   value={getExtensionJson()}
-                  className={`w-full h-48 p-3 rounded-lg border font-mono text-xs focus:outline-none ${isDarkMode ? 'bg-black/50 border-white/10 text-white/70' : 'bg-gray-50 border-black/10 text-black/70'}`}
+                  className={`w-full h-32 p-3 rounded-lg border font-mono text-[10px] focus:outline-none ${isDarkMode ? 'bg-black/50 border-white/10 text-white/70' : 'bg-gray-50 border-black/10 text-black/70'}`}
                 />
                 <button
                   onClick={() => handleCopy(getExtensionJson(), 'json_payload')}
-                  className="absolute top-2 right-2 p-2 bg-emerald-500 text-black rounded-md hover:bg-emerald-400 transition-colors shadow-sm"
+                  className="absolute top-2 right-2 p-1.5 bg-emerald-500 text-black rounded-md hover:bg-emerald-400 transition-colors shadow-sm"
                 >
-                  {copiedField === 'json_payload' ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  {copiedField === 'json_payload' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Copy-Paste Helper */}
-        <div className="space-y-6">
-          <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-[#1a1a1a] border-white/10' : 'bg-white border-black/10'}`}>
+        {/* Column 2: Bookmarklet (New) */}
+        <div className="space-y-6 flex flex-col">
+          <div className={`p-5 rounded-2xl border flex-1 ${isDarkMode ? 'bg-[#1a1a1a] border-white/10' : 'bg-white border-black/10'}`}>
+            <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-purple-500" />
+              2. Magic Bookmarklet
+            </h3>
+            <p className="text-xs opacity-70 mb-4">
+              <strong>No installation required!</strong> Works without Developer Mode.
+            </p>
+            
+            <div className={`p-4 rounded-xl mb-4 text-[11px] ${isDarkMode ? 'bg-purple-500/10 text-purple-200' : 'bg-purple-50 text-purple-800'}`}>
+              <h4 className="font-bold mb-2">How to use:</h4>
+              <ol className="list-decimal list-inside space-y-2 opacity-80">
+                <li>Copy the code below.</li>
+                <li>Right-click your <strong>Bookmarks Bar</strong> {'>'} <strong>Add Page</strong>.</li>
+                <li>Name it <strong>"Magic Fill"</strong>.</li>
+                <li>Paste the code into the <strong>URL</strong> field.</li>
+                <li>Go to a job application page and click it!</li>
+              </ol>
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="font-bold text-xs">Bookmarklet Code:</h4>
+              <div className="relative">
+                <textarea 
+                  readOnly 
+                  value={getBookmarkletCode()}
+                  className={`w-full h-24 p-3 rounded-lg border font-mono text-[10px] focus:outline-none ${isDarkMode ? 'bg-black/50 border-white/10 text-white/70' : 'bg-gray-50 border-black/10 text-black/70'}`}
+                />
+                <button
+                  onClick={() => handleCopy(getBookmarkletCode(), 'bookmarklet_code')}
+                  className="absolute top-2 right-2 p-1.5 bg-purple-500 text-white rounded-md hover:bg-purple-400 transition-colors shadow-sm"
+                >
+                  {copiedField === 'bookmarklet_code' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                </button>
+              </div>
+              <p className="text-[10px] opacity-50 italic">React blocks direct dragging of scripts for security. Please copy and paste into a new bookmark.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Column 3: Copy-Paste Helper */}
+        <div className="space-y-6 flex flex-col">
+          <div className={`p-5 rounded-2xl border flex-1 ${isDarkMode ? 'bg-[#1a1a1a] border-white/10' : 'bg-white border-black/10'}`}>
             <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
               <Copy className="w-5 h-5 text-blue-500" />
-              2. Manual Copy-Paste Helper
+              3. Manual Helper
             </h3>
-            <p className="text-sm opacity-70 mb-4">
-              If you don't want to use the extension, use these quick-copy buttons to manually paste your optimized data into the application forms.
+            <p className="text-xs opacity-70 mb-4">
+              Quick-copy individual fields for any form.
             </p>
 
             {!resumeData ? (
               <div className={`p-4 rounded-xl flex items-start gap-3 ${isDarkMode ? 'bg-yellow-500/10 text-yellow-200' : 'bg-yellow-50 text-yellow-800'}`}>
                 <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <p className="text-sm">You need to optimize a resume in the Builder tab first to generate this data.</p>
+                <p className="text-sm">Optimize a resume first.</p>
               </div>
             ) : (
-              <div className="space-y-6 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+              <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
                 {/* Personal Info */}
                 <div className="space-y-3">
                   <h4 className="font-bold text-sm border-b pb-2 opacity-80">Personal Information</h4>

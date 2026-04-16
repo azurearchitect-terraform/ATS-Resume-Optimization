@@ -4,14 +4,17 @@ import { JobTracker } from './JobTracker';
 import { CareerQuiz } from './CareerQuiz';
 import { ATSAutofillHelper } from './ATSAutofillHelper';
 
+import { User } from 'firebase/auth';
+
 interface CareerToolsProps {
   isDarkMode: boolean;
   engineConfig: Record<string, any>;
   selectedEngine: 'gemini' | 'openai' | 'hybrid';
   resumeData: any;
+  user: User | null;
 }
 
-export const CareerTools: React.FC<CareerToolsProps> = ({ isDarkMode, engineConfig, selectedEngine, resumeData }) => {
+export const CareerTools: React.FC<CareerToolsProps> = ({ isDarkMode, engineConfig, selectedEngine, resumeData, user }) => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
 
   const tools = [
@@ -74,7 +77,7 @@ export const CareerTools: React.FC<CareerToolsProps> = ({ isDarkMode, engineConf
   ];
 
   if (activeTool === 'tracker') {
-    return <JobTracker isDarkMode={isDarkMode} engineConfig={engineConfig} selectedEngine={selectedEngine} onBack={() => setActiveTool(null)} />;
+    return <JobTracker isDarkMode={isDarkMode} engineConfig={engineConfig} selectedEngine={selectedEngine} user={user} onBack={() => setActiveTool(null)} />;
   }
 
   if (activeTool === 'autofill') {

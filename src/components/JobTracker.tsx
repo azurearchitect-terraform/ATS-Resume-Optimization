@@ -1,12 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Briefcase, Building, IndianRupee, Calendar, Trash2, Loader2, ChevronRight, Search, Star } from 'lucide-react';
 import { GoogleGenAI, Type } from '@google/genai';
+import { User } from 'firebase/auth';
+import { 
+  collection, 
+  query, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  orderBy,
+  serverTimestamp,
+  setDoc
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import { handleFirestoreError } from '../lib/firebaseUtils';
+import { OperationType } from '../types';
 
 interface JobTrackerProps {
   isDarkMode: boolean;
   engineConfig: Record<string, any>;
   selectedEngine: 'gemini' | 'openai' | 'hybrid';
   onBack: () => void;
+  user: User | null;
 }
 
 interface JobEntry {
@@ -22,22 +39,43 @@ interface JobEntry {
   appliedDate?: number;
 }
 
-export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig, onBack }) => {
-  const [jobs, setJobs] = useState<JobEntry[]>(() => {
-    const saved = localStorage.getItem('ai_job_tracker');
-    return saved ? JSON.parse(saved) : [];
-  });
+export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig, onBack, user }) => {
+  const [jobs, setJobs] = useState<JobEntry[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newJd, setNewJd] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    localStorage.setItem('ai_job_tracker', JSON.stringify(jobs));
-  }, [jobs]);
+    if (!user) {
+      setJobs([]);
+      setIsLoading(false);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'users', user.uid, 'jobs'),
+      orderBy('dateAdded', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const jobsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as JobEntry[];
+      setJobs(jobsData);
+      setIsLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/jobs`);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const handleAddJob = async () => {
-    if (!newJd.trim()) return;
+    if (!newJd.trim() || !user) return;
     setIsExtracting(true);
 
     try {
@@ -66,18 +104,20 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
 
       const data = JSON.parse(response.text || "{}");
       
-      const newJob: JobEntry = {
-        id: Date.now().toString(),
+      const newJobData = {
         company: data.company || 'Unknown Company',
         role: data.role || 'Unknown Role',
         salary: data.salary || 'Not specified',
         skills: data.skills || [],
         status: 'Saved',
         dateAdded: Date.now(),
-        jd: newJd
+        jd: newJd,
+        updatedAt: serverTimestamp()
       };
 
-      setJobs(prev => [newJob, ...prev]);
+      await addDoc(collection(db, 'users', user.uid, 'jobs'), newJobData)
+        .catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/jobs`));
+
       setIsAdding(false);
       setNewJd('');
     } catch (error) {
@@ -87,21 +127,31 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
     setIsExtracting(false);
   };
 
-  const updateStatus = (id: string, newStatus: JobEntry['status']) => {
-    setJobs(prev => prev.map(j => {
-      if (j.id === id) {
-        const updatedJob = { ...j, status: newStatus };
-        if (newStatus === 'Applied' && j.status !== 'Applied') {
-          updatedJob.appliedDate = Date.now();
-        }
-        return updatedJob;
+  const updateStatus = async (id: string, newStatus: JobEntry['status']) => {
+    if (!user) return;
+    
+    const jobRef = doc(db, 'users', user.uid, 'jobs', id);
+    const updates: any = { 
+      status: newStatus,
+      updatedAt: serverTimestamp()
+    };
+    
+    if (newStatus === 'Applied') {
+      const currentJob = jobs.find(j => j.id === id);
+      if (currentJob && currentJob.status !== 'Applied') {
+        updates.appliedDate = Date.now();
       }
-      return j;
-    }));
+    }
+
+    await updateDoc(jobRef, updates)
+      .catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}/jobs/${id}`));
   };
 
-  const deleteJob = (id: string) => {
-    setJobs(prev => prev.filter(j => j.id !== id));
+  const deleteJob = async (id: string) => {
+    if (!user) return;
+    const jobRef = doc(db, 'users', user.uid, 'jobs', id);
+    await deleteDoc(jobRef)
+      .catch(err => handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/jobs/${id}`));
   };
 
   const stages: JobEntry['status'][] = ['Saved', 'Applied', 'Interviewing', 'Offer', 'Rejected'];
@@ -213,10 +263,15 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
                       </div>
                     )}
 
-                    {job.appliedDate && job.status !== 'Saved' && (
+                    {job.appliedDate && job.status !== 'Saved' ? (
                       <div className="flex items-center gap-1 text-[10px] opacity-60 mb-3">
                         <Calendar className="w-3 h-3" />
                         <span>Applied: {new Date(job.appliedDate).toLocaleString()}</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 text-[10px] opacity-60 mb-3">
+                        <Calendar className="w-3 h-3" />
+                        <span>Added: {new Date(job.dateAdded).toLocaleString()}</span>
                       </div>
                     )}
                     
