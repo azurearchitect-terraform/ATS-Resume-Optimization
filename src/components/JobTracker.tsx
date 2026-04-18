@@ -263,15 +263,10 @@ export const JobTracker: React.FC<JobTrackerProps> = ({ isDarkMode, engineConfig
                       </div>
                     )}
 
-                    {job.appliedDate && job.status !== 'Saved' ? (
+                    {job.appliedDate && job.status !== 'Saved' && (
                       <div className="flex items-center gap-1 text-[10px] opacity-60 mb-3">
                         <Calendar className="w-3 h-3" />
                         <span>Applied: {new Date(job.appliedDate).toLocaleString()}</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1 text-[10px] opacity-60 mb-3">
-                        <Calendar className="w-3 h-3" />
-                        <span>Added: {new Date(job.dateAdded).toLocaleString()}</span>
                       </div>
                     )}
                     

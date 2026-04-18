@@ -97,7 +97,7 @@ export default function App() {
     return localStorage.getItem('isAutosaveEnabled') === 'true';
   });
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
-  const [lastJobId, setLastJobId] = useState<string | null>(() => sessionStorage.getItem('lastJobId'));
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
 
   useEffect(() => {
     // Clean up URL parameters if they exist (like ?origin=...)
@@ -637,7 +637,7 @@ export default function App() {
     openai: { model: 'gpt-4o-mini', apiKey: '' },
     production: { model: 'auto', apiKey: '' }
   });
-  const [selectedEngine, setSelectedEngine] = useState<EngineType | 'production'>('gemini');
+  const [selectedEngine, setSelectedEngine] = useState<'gemini' | 'openai' | 'hybrid-gemini' | 'hybrid-openai'>('gemini');
   const [showEngineSettings, setShowEngineSettings] = useState(false);
   
   const getSectionStyle = (sectionId: string) => {
@@ -1313,17 +1313,6 @@ export default function App() {
     }
   };
 
-  const logUsageToFirestore = async (log: any) => {
-    try {
-      await addDoc(collection(db, 'analytics'), {
-        ...log,
-        timestamp: serverTimestamp()
-      });
-    } catch (e) {
-      console.error("Failed to log usage to Firestore", e);
-    }
-  };
-
   const handleOptimize = async () => {
     console.log("handleOptimize called");
     setError("Optimization started...");
@@ -1339,8 +1328,12 @@ export default function App() {
       setError("API keys are now managed securely in your Profile. Please go to the Profile tab and save your Gemini API key.");
       return;
     }
-    if (selectedEngine === 'production' && (!routerConfig.openaiConfig.apiKey || !routerConfig.geminiConfig.apiKey)) {
-      setError("Hybrid Mode requires both OpenAI and Gemini API keys. Please go to the Profile tab and save your API keys.");
+    if (selectedEngine === 'hybrid-openai' && (!routerConfig.openaiConfig.apiKey || !routerConfig.geminiConfig.apiKey)) {
+      setError("Hybrid OpenAI Mode requires both OpenAI and Gemini API keys.");
+      return;
+    }
+    if (selectedEngine === 'hybrid-gemini' && !routerConfig.geminiConfig.apiKey) {
+      setError("Hybrid Gemini Mode requires a Gemini API key.");
       return;
     }
 
@@ -1403,7 +1396,13 @@ export default function App() {
       });
     }, 200);
     
-    const engineName = selectedEngine === 'production' ? 'Hybrid Mode (Gemini + OpenAI)' : selectedEngine.toUpperCase();
+    const engineNameMap: Record<string, string> = {
+      'gemini': 'GEMINI',
+      'openai': 'OPENAI',
+      'hybrid-gemini': 'Hybrid (Gemini 3.1 Pro)',
+      'hybrid-openai': 'Hybrid (OpenAI GPT-5.4 Nano)'
+    };
+    const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
     setOptimizationStatus(`Initializing ${engineName}...`);
 
     const controller = new AbortController();
@@ -1416,7 +1415,7 @@ export default function App() {
       const routerConfig = getRouterConfig();
       let completedAudiences = 0;
       const totalAudiences = currentAudiences.length;
-      const engineName = selectedEngine === 'production' ? 'Hybrid Mode (Gemini + OpenAI)' : selectedEngine.toUpperCase();
+      const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
 
       // Run all audience optimizations in parallel
       const optimizationPromises = currentAudiences.map(async (audienceId) => {
@@ -1434,7 +1433,8 @@ export default function App() {
           jobUrl, 
           fastMode, 
           recruiterSimulationMode,
-          customPrompt
+          customPrompt,
+          selectedEngine.includes('hybrid') ? selectedEngine : undefined
         );
         
         completedAudiences++;
@@ -1466,35 +1466,7 @@ export default function App() {
               }
             }));
             syncTokenUsage('gemini', geminiInput, geminiOutput);
-
-            // Log Gemini usage to analytics
-            logUsageToFirestore({
-              userId: user?.uid || 'anonymous',
-              model: 'gemini-3-flash-preview',
-              inputTokens: geminiInput,
-              outputTokens: geminiOutput,
-              totalTokens: data._geminiUsage.totalTokenCount || (geminiInput + geminiOutput),
-              cacheHit: false,
-              endpoint: '/api/v2/optimize',
-              cost: (geminiInput / 1000000 * 0.075) + (geminiOutput / 1000000 * 0.30)
-            });
           }
-          
-          // Log main model usage
-          const inputDelta = data._usage?.promptTokenCount || 0;
-          const outputDelta = data._usage?.candidatesTokenCount || 0;
-          const model = data._model || engineConfig[selectedEngine].model;
-          
-          logUsageToFirestore({
-            userId: user?.uid || 'anonymous',
-            model: model,
-            inputTokens: inputDelta,
-            outputTokens: outputDelta,
-            totalTokens: data._usage?.totalTokenCount || (inputDelta + outputDelta),
-            cacheHit: !!data._cacheHit,
-            endpoint: '/api/v2/optimize',
-            cost: data._cost || 0
-          });
         } else if (data._usage && data._engine) {
           // Handle Legacy Pipeline
           const engine = data._engine === 'gemini' ? 'gemini' : 'openai';
@@ -1554,7 +1526,6 @@ export default function App() {
             updatedAt: serverTimestamp()
           });
           setLastJobId(docRef.id);
-          sessionStorage.setItem('lastJobId', docRef.id);
         } catch (e) {
           console.error("Failed to sync to Job Tracker (Firestore)", e);
         }
@@ -1577,7 +1548,6 @@ export default function App() {
           };
           localStorage.setItem('ai_job_tracker', JSON.stringify([newJob, ...jobs]));
           setLastJobId(newId);
-          sessionStorage.setItem('lastJobId', newId);
         } catch (e) {
           console.error("Failed to sync to Job Tracker", e);
         }
@@ -2355,7 +2325,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             >
               {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
-            <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0 - STABLE</span>
+            <span className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-widest opacity-60 px-2 py-1 rounded bg-white/5 border border-white/10`}>V-3.0.0 - (Ver. 18-04-2026)</span>
+            <div className={`hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-500 animate-pulse`}>
+              <Cpu className="w-3 h-3" />
+              <span>GEMINI 3.1 PRO (NATIVE)</span>
+            </div>
           </div>
         </div>
       </header>
@@ -2707,8 +2681,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         <div className="space-y-10">
                           <div>
                             <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-4 opacity-50">Select Engine</label>
-                            <div className="grid grid-cols-3 gap-3">
-                              {(['gemini', 'openai', 'production'] as const).map((eng) => (
+                            <div className="grid grid-cols-2 gap-3">
+                              {(['gemini', 'openai', 'hybrid-gemini', 'hybrid-openai'] as const).map((eng) => (
                                 <button
                                   key={eng}
                                   onClick={() => setSelectedEngine(eng)}
@@ -2718,19 +2692,24 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       : (isDarkMode ? 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10' : 'bg-white text-black/60 border-black/5 hover:bg-black/5')
                                   }`}
                                 >
-                                  {eng === 'production' ? 'Hybrid' : eng}
+                                  {eng === 'hybrid-gemini' ? 'Hybrid Gemini' : eng === 'hybrid-openai' ? 'Hybrid OpenAI' : eng}
                                 </button>
                               ))}
                             </div>
-                            {selectedEngine === 'production' && (
+                            {selectedEngine === 'hybrid-gemini' && (
                               <p className="mt-3 text-[10px] opacity-50 italic leading-relaxed">
-                                Hybrid mode intelligently routes tasks: Gemini handles extraction, parsing, and scoring (cost-effective), while OpenAI handles creative rewriting and complex analysis (premium quality).
+                                Hybrid Gemini uses Gemini Flash for extraction and Gemini 3.1 Pro for high-reasoning creative rewriting. (Native & Efficient)
+                              </p>
+                            )}
+                            {selectedEngine === 'hybrid-openai' && (
+                              <p className="mt-3 text-[10px] opacity-50 italic leading-relaxed">
+                                Hybrid OpenAI uses Gemini Flash for extraction and OpenAI GPT-4o for creative synthesis. (Premium Hybrid)
                               </p>
                             )}
                           </div>
 
                           <div className="space-y-8">
-                           {selectedEngine !== 'production' ? (
+                           {!selectedEngine.startsWith('hybrid') ? (
                              <div className="space-y-3">
                                <label className="block text-[11px] font-black uppercase tracking-[0.15em] mb-2 opacity-50">Model Configuration</label>
                                <div className="relative">
@@ -2738,10 +2717,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                    className={`w-full px-4 py-3.5 text-xs border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all appearance-none ${
                                      isDarkMode ? 'bg-[#1A1A1A] border-white/10 text-white' : 'bg-white border-black/10 text-black'
                                    }`}
-                                   value={engineConfig[selectedEngine].model}
+                                   value={engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'].model}
                                    onChange={(e) => setEngineConfig({
                                      ...engineConfig,
-                                     [selectedEngine]: { ...engineConfig[selectedEngine], model: e.target.value }
+                                     [selectedEngine === 'gemini' ? 'gemini' : 'openai']: { ...engineConfig[selectedEngine === 'gemini' ? 'gemini' : 'openai'], model: e.target.value }
                                    })}
                                  >
                                    {selectedEngine === 'gemini' && (
@@ -3062,13 +3041,15 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 </div>
                               </div>
                               <div className="flex justify-end mb-2">
-                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{selectedEngine === 'production' ? 'Hybrid Mode' : selectedEngine}</span>
+                                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">
+                                  {selectedEngine.includes('hybrid') ? 'Hybrid Mode' : selectedEngine}
+                                </span>
                               </div>
                               
                               <div className="space-y-3">
-                                {(selectedEngine === 'gemini' || selectedEngine === 'production') && (
-                                  <div className={selectedEngine === 'production' ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
-                                    {selectedEngine === 'production' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">Gemini</span>}
+                                {(selectedEngine === 'gemini' || selectedEngine.startsWith('hybrid')) && (
+                                  <div className={selectedEngine.startsWith('hybrid') ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
+                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">Gemini</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
@@ -3082,9 +3063,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                   </div>
                                 )}
                                 
-                                {(selectedEngine === 'openai' || selectedEngine === 'production') && (
+                                {(selectedEngine === 'openai' || selectedEngine === 'hybrid-openai') && (
                                   <div>
-                                    {selectedEngine === 'production' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">OpenAI</span>}
+                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">OpenAI</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>

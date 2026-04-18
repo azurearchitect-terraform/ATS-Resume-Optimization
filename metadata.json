@@ -1,5 +1,6 @@
 {
-  "name": "AI-POWERED INTELLIGENCE - Professional Resume Optimizer",
-  "description": "An advanced AI-powered tool to optimize resumes for Applicant Tracking Systems (ATS) with multi-directional resizable layout.",
-  "requestFramePermissions": []
+  "name": "AI Resume Optimizer",
+  "description": "An advanced AI-powered tool to optimize resumes for Applicant Tracking Systems (ATS), powered by Gemini 3.1 Pro.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }

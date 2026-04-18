@@ -54,8 +54,6 @@ export interface OptimizationResult {
   };
   _engine?: string;
   _model?: string;
-  _cacheHit?: boolean;
-  _cost?: number;
 }
 
 export type EngineType = 'gemini' | 'openai';
@@ -117,7 +115,7 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const genAI = new GoogleGenerativeAI(apiKey);
       const genModel = genAI.getGenerativeModel({ 
-        model: model || "gemini-2.5-flash",
+        model: model || "gemini-3.1-pro-preview",
         generationConfig: {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
         }
@@ -202,7 +200,7 @@ export async function evaluateSuitability(
   config: RouterConfig
 ): Promise<SuitabilityResult> {
   const routedConfig = routeTask('evaluate_suitability', config);
-  const modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash';
+  const modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-pro-preview';
 
   const prompt = `
 You are an expert technical recruiter screening a candidate's resume against a job description.
@@ -248,7 +246,8 @@ export async function optimizeResume(
   jobUrl?: string,
   fastMode: boolean = false,
   recruiterSimulationMode: boolean = false,
-  customPrompt?: string
+  customPrompt?: string,
+  pipelineType?: string
 ): Promise<OptimizationResult> {
   const routedConfig = routeTask(recruiterSimulationMode ? 'recruiter_simulation' : 'rewrite_resume', config);
   
@@ -260,10 +259,10 @@ export async function optimizeResume(
     if (config.mode === 'production') {
       // In Hybrid mode, fastMode forces Gemini to save costs
       engineToUse = 'gemini';
-      modelToUse = 'gemini-2.5-flash';
+      modelToUse = 'gemini-2.0-flash';
     } else {
       // In single-engine mode, just use the smaller model
-      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash';
+      modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-2.0-flash';
     }
   }
 
@@ -271,7 +270,7 @@ export async function optimizeResume(
   const isTechnicalRole = /engineer|developer|architect|specialist|analyst|technician/i.test(targetRole);
 
   // V2 PIPELINE INTEGRATION: Use the optimized backend pipeline for production mode
-  if (config.mode === 'production' && !recruiterSimulationMode && !fastMode) {
+  if ((config.mode === 'production' || pipelineType) && !recruiterSimulationMode && !fastMode) {
     try {
       const response = await fetch('/api/v2/optimize', {
         method: 'POST',
@@ -283,7 +282,8 @@ export async function optimizeResume(
           mode,
           audience,
           customPrompt,
-          encryptedKey: config.openaiConfig.apiKey
+          encryptedKey: config.openaiConfig.apiKey,
+          pipelineType
         })
       });
 
@@ -472,7 +472,7 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
         // Fallback to Flash if Pro fails with rate limit or JSON error
         if (engineToUse === 'gemini' && currentModel.includes('pro')) {
           console.warn(`Error hit on Gemini Pro. Falling back to Gemini Flash for retry ${retryCount}...`);
-          currentModel = 'gemini-2.5-flash';
+          currentModel = 'gemini-2.0-flash';
         }
 
         const delay = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;

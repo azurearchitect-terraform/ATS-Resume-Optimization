@@ -43,13 +43,13 @@ export function routeTask(task: TaskType, config: RouterConfig): EngineConfig {
     case 'recruiter_message':
     case 'optimize_headline':
     case 'optimize_about':
+    case 'rewrite_resume':
+    case 'cover_letter':
       selectedEngine = 'gemini';
       break;
 
     // Tasks routed to OpenAI (Premium Quality & Complex Reasoning)
-    case 'rewrite_resume':
     case 'recruiter_simulation':
-    case 'cover_letter':
     case 'linkedin_analysis':
       selectedEngine = 'openai';
       break;

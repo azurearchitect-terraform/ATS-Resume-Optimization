@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
 /**
  * Caching Architecture (In-memory, Redis-ready)

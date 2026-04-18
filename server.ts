@@ -4,7 +4,7 @@ import puppeteer from "puppeteer";
 import bodyParser from "body-parser";
 import cors from "cors";
 import crypto from "crypto";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { v4 as uuidv4 } from 'uuid';
 import { google } from "googleapis";
@@ -29,12 +29,10 @@ const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 // Function to log usage to Firestore
 async function logUsage(log: UsageLog) {
   try {
-    console.log(`[Analytics] Logging usage for model: ${log.model}, endpoint: ${log.endpoint}`);
     await db.collection("analytics").add({
       ...log,
       timestamp: FieldValue.serverTimestamp()
     });
-    console.log("[Analytics] Successfully logged usage to Firestore");
   } catch (error) {
     console.error("Error logging usage to Firestore:", error);
   }
@@ -450,24 +448,91 @@ async function startServer() {
     res.json({ success: true, message: "Cache cleared successfully" });
   });
 
-  // Admin Analytics Endpoints - REMOVED (Moved to client-side Firestore)
-
-  app.get("/api/admin/test-log", async (req, res) => {
+  // Admin Analytics Endpoints
+  app.get("/api/admin/stats", async (req, res) => {
     try {
-      await logUsage({
-        userId: "test-user",
-        model: "gemini-3.1-pro-preview",
-        inputTokens: 100,
-        outputTokens: 50,
-        totalTokens: 150,
-        cacheHit: false,
-        endpoint: "/api/v2/optimize",
-        timestamp: Date.now(),
-        cost: 0.001
+      const snapshot = await db.collection("analytics").get();
+      const logs = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          timestamp: data.timestamp?.toDate?.()?.getTime() || data.timestamp || Date.now()
+        } as UsageLog;
       });
-      res.json({ message: "Test log added" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+
+      const totalRequests = logs.filter(l => l.endpoint === "/api/v2/optimize").length;
+      const totalTokens = logs.reduce((sum, l) => sum + l.totalTokens, 0);
+      const totalCost = logs.reduce((sum, l) => sum + l.cost, 0);
+      const cacheHits = logs.filter(l => l.cacheHit).length;
+      const cacheHitRatio = totalRequests > 0 ? (cacheHits / totalRequests) * 100 : 0;
+
+      res.json({
+        totalRequests,
+        totalTokens,
+        totalCost,
+        cacheHitRatio
+      });
+    } catch (error) {
+      console.error("Error fetching admin stats:", error);
+      res.status(500).json({ error: "Failed to fetch admin stats" });
+    }
+  });
+
+  app.get("/api/admin/usage-by-day", async (req, res) => {
+    try {
+      const snapshot = await db.collection("analytics").get();
+      const logs = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          ...data,
+          timestamp: data.timestamp?.toDate?.()?.getTime() || data.timestamp || Date.now()
+        } as UsageLog;
+      });
+
+      const dailyData: Record<string, { tokens: number, cost: number }> = {};
+      
+      logs.forEach(log => {
+        const date = new Date(log.timestamp).toISOString().split('T')[0];
+        if (!dailyData[date]) {
+          dailyData[date] = { tokens: 0, cost: 0 };
+        }
+        dailyData[date].tokens += log.totalTokens;
+        dailyData[date].cost += log.cost;
+      });
+
+      const result = Object.entries(dailyData).map(([date, data]) => ({
+        date,
+        ...data
+      })).sort((a, b) => a.date.localeCompare(b.date));
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching usage by day:", error);
+      res.status(500).json({ error: "Failed to fetch usage by day" });
+    }
+  });
+
+  app.get("/api/admin/model-usage", async (req, res) => {
+    try {
+      const snapshot = await db.collection("analytics").get();
+      const logs = snapshot.docs.map(doc => doc.data() as UsageLog);
+
+      const modelData: Record<string, number> = {};
+      
+      logs.forEach(log => {
+        const model = log.cacheHit ? "Cache" : log.model;
+        modelData[model] = (modelData[model] || 0) + 1;
+      });
+
+      const result = Object.entries(modelData).map(([name, value]) => ({
+        name,
+        value
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching model usage:", error);
+      res.status(500).json({ error: "Failed to fetch model usage" });
     }
   });
 
@@ -598,7 +663,11 @@ async function startServer() {
         openaiKey = decryptedString; // Fallback
       }
 
-      if (!openaiKey) throw new Error("OpenAI API Key is required for high-quality generation.");
+      const pipelineType = req.body.pipelineType || 'hybrid-gemini';
+
+      if (pipelineType === 'hybrid-openai' && !openaiKey) {
+        throw new Error("OpenAI API Key is required for Hybrid OpenAI mode.");
+      }
 
       // STEP 1: Gemini (Cheap) - Extraction & Analysis
       console.log("[Pipeline] Step 1: Gemini Extraction...");
@@ -667,23 +736,112 @@ async function startServer() {
         }
       `;
 
-      let usedModel = "gemini-3.1-pro-preview";
       let result;
+      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
 
-      try {
-        console.log(`[Pipeline] Step 3: Gemini Generation (${usedModel})...`);
-        const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ 
+      if (pipelineType === 'hybrid-openai') {
+        // OPENAI BRANCH
+        console.log(`[Pipeline] Step 3: OpenAI Generation (${usedModel})...`);
+        const openai = new OpenAI({ apiKey: openaiKey });
+        const chatCompletion = await openai.chat.completions.create({
           model: usedModel,
-          generationConfig: { responseMimeType: "application/json" }
+          messages: [{ 
+            role: "system", 
+            content: "You are a senior executive resume strategist. Output strictly JSON." 
+          }, { 
+            role: "user", 
+            content: finalPrompt
+          }],
+          response_format: { type: "json_object" }
         });
 
-        const genResult = await model.generateContent(finalPrompt);
+        const responseText = chatCompletion.choices[0].message.content || "";
+        const genInput = chatCompletion.usage?.prompt_tokens || 0;
+        const genOutput = chatCompletion.usage?.completion_tokens || 0;
+
+        logUsage({
+          userId: "anonymous",
+          model: usedModel,
+          inputTokens: genInput,
+          outputTokens: genOutput,
+          totalTokens: genInput + genOutput,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(usedModel, genInput, genOutput)
+        });
+
+        // Log Gemini Extraction
+        logUsage({
+          userId: "anonymous",
+          model: "gemini-2.0-flash",
+          inputTokens: geminiUsage.promptTokenCount,
+          outputTokens: geminiUsage.candidatesTokenCount,
+          totalTokens: geminiUsage.totalTokenCount,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost("gemini-2.0-flash", geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
+        });
+
+        result = {
+          result: responseText,
+          usage: {
+            promptTokenCount: genInput,
+            candidatesTokenCount: genOutput,
+            totalTokenCount: genInput + genOutput
+          },
+          geminiUsage,
+          intermediateData: { resumeData, jdKeywords },
+          _engine: 'hybrid-openai',
+          _model: usedModel
+        };
+      } else {
+        // GEMINI BRANCH
+        try {
+        console.log(`[Pipeline] Step 3: Gemini Generation (${usedModel})...`);
+        const genAI = new GoogleGenAI(geminiKey);
+        const model = genAI.getGenerativeModel({ 
+          model: usedModel,
+        });
+
+        const genResult = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        });
         const response = genResult.response;
         const text = response.text();
         
         const genInput = response.usageMetadata?.promptTokenCount || 0;
         const genOutput = response.usageMetadata?.candidatesTokenCount || 0;
+
+        // Log Gemini Pro usage
+        logUsage({
+          userId: "anonymous",
+          model: usedModel,
+          inputTokens: genInput,
+          outputTokens: genOutput,
+          totalTokens: response.usageMetadata?.totalTokenCount || 0,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost(usedModel, genInput, genOutput)
+        });
+
+        // Log Gemini 3 usage (extraction steps)
+        const geminiInput = geminiUsage.promptTokenCount;
+        const geminiOutput = geminiUsage.candidatesTokenCount;
+        logUsage({
+          userId: "anonymous",
+          model: "gemini-3-flash-preview",
+          inputTokens: geminiInput,
+          outputTokens: geminiOutput,
+          totalTokens: geminiUsage.totalTokenCount,
+          cacheHit: false,
+          endpoint: "/api/v2/optimize",
+          timestamp: Date.now(),
+          cost: calculateCost("gemini-3-flash-preview", geminiInput, geminiOutput)
+        });
 
         result = {
           result: text,
@@ -698,8 +856,7 @@ async function startServer() {
             jdKeywords
           },
           _model: usedModel,
-          _optimized: true,
-          _cost: calculateCost(usedModel, genInput, genOutput)
+          _optimized: true
         };
         
         console.log(`[Usage Log] Model: ${usedModel}, In: ${genInput}, Out: ${genOutput}`);
@@ -707,12 +864,15 @@ async function startServer() {
       } catch (genError: any) {
         console.warn("[Pipeline] Gemini Pro Failed, falling back to Gemini Flash...", genError.message);
         
-        // FALLBACK: Gemini 3 Flash
-        const fallbackModelName = "gemini-3-flash-preview";
-        const genAI = new GoogleGenerativeAI(geminiKey);
+        // FALLBACK: Gemini 2.0 Flash
+        const fallbackModelName = "gemini-2.0-flash";
+        const genAI = new GoogleGenAI(geminiKey);
         const model = genAI.getGenerativeModel({ model: fallbackModelName });
         
-        const fallbackResult = await model.generateContent(finalPrompt);
+        const fallbackResult = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        });
         const fallbackResponse = fallbackResult.response;
         const text = fallbackResponse.text();
         const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -769,8 +929,9 @@ async function startServer() {
         
         console.log(`[Usage Log] Fallback Model: ${fallbackModelName}`);
       }
+    }
 
-      // STEP 4: Cache Result
+    // STEP 4: Cache Result
       Optimization.saveToCache(cacheKey, result);
 
       res.json(result);
