@@ -71,12 +71,30 @@ import { AdminDashboard } from './components/AdminDashboard';
 // Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-emerald-950">
+      <div className="w-full max-w-md p-8 bg-[#141414] rounded-3xl border border-white/10 shadow-2xl space-y-6 text-center">
+        <h1 className="text-3xl font-black text-white tracking-tight">AI Resume Optimizer</h1>
+        <p className="text-emerald-400/70">Securely optimize your resume for architect-level roles.</p>
+        <button
+          onClick={onLogin}
+          className="w-full py-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold transition-all shadow-lg shadow-emerald-500/20"
+        >
+          Sign in with Google
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type OptimizationMode = 'conservative' | 'balanced' | 'aggressive';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isApiKeySaved, setIsApiKeySaved] = useState(false);
   const [encryptedApiKey, setEncryptedApiKey] = useState('');
@@ -173,6 +191,7 @@ export default function App() {
             if (data.encryptedApiKey) {
               setEncryptedApiKey(data.encryptedApiKey);
               setOpenaiApiKey('••••••••••••••••'); // Placeholder
+              setGeminiApiKey('••••••••••••••••'); // Placeholder
               setIsApiKeySaved(true);
             }
             if (data.driveAccessToken) {
@@ -185,6 +204,7 @@ export default function App() {
         }
       } else {
         setOpenaiApiKey('');
+        setGeminiApiKey('');
         setEncryptedApiKey('');
         setIsApiKeySaved(false);
         setDriveAccessToken(null);
@@ -386,9 +406,9 @@ export default function App() {
       let finalEncryptedKey = encryptedApiKey;
 
       // If the user entered a new API key (not the placeholder)
-      if (openaiApiKey && openaiApiKey !== '••••••••••••••••') {
+      if ((openaiApiKey && openaiApiKey !== '••••••••••••••••') || (geminiApiKey && geminiApiKey !== '••••••••••••••••')) {
         const keysToEncrypt = JSON.stringify({
-          gemini: '', // Gemini key is now handled via environment variables
+          gemini: geminiApiKey !== '••••••••••••••••' ? geminiApiKey : '',
           openai: openaiApiKey !== '••••••••••••••••' ? openaiApiKey : ''
         });
 
@@ -405,6 +425,7 @@ export default function App() {
         finalEncryptedKey = data.encryptedKey;
         setEncryptedApiKey(finalEncryptedKey);
         if (openaiApiKey) setOpenaiApiKey('••••••••••••••••');
+        if (geminiApiKey) setGeminiApiKey('••••••••••••••••');
         setIsApiKeySaved(true);
       }
 
@@ -443,6 +464,7 @@ export default function App() {
             updatedAt: serverTimestamp()
           }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'users/' + user.uid));
           setOpenaiApiKey('');
+          setGeminiApiKey('');
           setEncryptedApiKey('');
           setIsApiKeySaved(false);
           showToast("API keys cleared successfully.", "success");
@@ -2275,6 +2297,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     return <AdminDashboard onBack={() => setShowAdminDashboard(false)} isDarkMode={isDarkMode} />;
   }
 
+  if (isAuthReady && !user) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className={`h-screen flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'} font-sans selection:bg-emerald-500/30`}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
@@ -3114,6 +3140,23 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         </div>
 
                         <div>
+                          <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">Gemini API Key</label>
+                          <input 
+                            type="password"
+                            placeholder="Enter your Gemini API Key (Optional)"
+                            value={geminiApiKey}
+                            onChange={(e) => {
+                              setGeminiApiKey(e.target.value);
+                              setIsApiKeySaved(false);
+                            }}
+                            className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                              isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
+                            }`}
+                          />
+                          <p className="mt-1 text-[9px] opacity-40 italic">Note: If left empty, the system-wide Gemini key will be used.</p>
+                        </div>
+
+                        <div>
                           <label className="block text-[10px] font-bold uppercase tracking-widest mb-2 opacity-50">OpenAI API Key</label>
                           <input 
                             type="password"
@@ -3194,7 +3237,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         <div className="flex items-center justify-between mb-4">
                           <div>
                             <div className="font-bold text-sm">OAuth Connection</div>
-                            <div className="text-xs opacity-60">Connect your personal Google Drive</div>
+                            <div className="text-xs opacity-60">Connect *any* Google Drive account</div>
                           </div>
                           <button
                             onClick={handleConnectDrive}
@@ -3204,7 +3247,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20'
                             }`}
                           >
-                            {driveAccessToken ? 'Connected' : (isDriveConnected ? 'Reconnect Drive' : 'Connect Drive')}
+                            {driveAccessToken ? 'Change / Reconnect Drive' : (isDriveConnected ? 'Connect Drive' : 'Connect Drive')}
                           </button>
                         </div>
                         

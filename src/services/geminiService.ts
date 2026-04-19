@@ -107,10 +107,29 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
   if (engine === 'gemini') {
     // Gemini MUST be called from the frontend as per guidelines
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      let apiKey = process.env.GEMINI_API_KEY;
+      
+      // If an encrypted key is provided (from the user's profile), try to use it
+      if (encryptedKey && encryptedKey.includes(':')) {
+        try {
+          const response = await fetch('/api/decrypt-keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ encryptedKey })
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.keys && data.keys.gemini) {
+              apiKey = data.keys.gemini;
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to decrypt user Gemini key, falling back to system key.", e);
+        }
+      }
       
       if (!apiKey) {
-        throw new Error("Gemini API key is missing from the environment.");
+        throw new Error("Gemini API key is missing. Please provide your own key in settings or contact the administrator.");
       }
 
       const genAI = new GoogleGenerativeAI(apiKey);
