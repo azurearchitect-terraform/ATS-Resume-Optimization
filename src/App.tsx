@@ -2448,7 +2448,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         >
           <div className={`sticky top-0 z-20 p-2 md:p-4 border-b ${isDarkMode ? 'bg-neutral-950 border-white/10' : 'bg-white border-black/5'}`}>
             <div className="flex gap-1 p-1 bg-neutral-100 dark:bg-white/5 rounded-lg">
-                      {(['build', 'profile', 'style', 'assets', 'tools'] as const).map((tab) => (
+                      {(['build', 'profile', 'style', 'tools'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab)}
@@ -2908,7 +2908,19 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             }`}
                             value={jobDescription}
                             onChange={(e) => setJobDescription(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && e.ctrlKey) {
+                                e.preventDefault();
+                                setJobDescription(prev => prev + '\n');
+                              }
+                            }}
                           />
+                          <button 
+                            onClick={() => setJobDescription('')}
+                            className="text-xs text-red-500 hover:text-red-600 mt-1 block"
+                          >
+                            Clear Description
+                          </button>
                           
                           {/* Suitability Check Section */}
                           <div className="pt-2">
@@ -3039,6 +3051,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               placeholder="Add your own instructions for the AI (e.g., 'Focus more on my cloud architecture experience' or 'Use a more formal British English tone')"
                               value={customPrompt}
                               onChange={(e) => setCustomPrompt(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && e.ctrlKey) {
+                                  e.preventDefault();
+                                  setCustomPrompt(prev => prev + '\n');
+                                }
+                              }}
                               rows={3}
                               className={`w-full px-4 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none text-sm ${
                                 isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
@@ -3693,42 +3711,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                   </div>
                 </div>
               )}
-              {activeTab === 'tools' && (
-                <div className="space-y-6">
-                  <CareerTools 
-                    isDarkMode={isDarkMode} 
-                    engineConfig={engineConfig} 
-                    selectedEngine={selectedEngine as any} 
-                    resumeData={results[activeAudience]}
-                    user={user}
-                  />
-                </div>
-              )}
-              {activeTab === 'assets' && (
-                <div className="space-y-6">
-                  <StatusIndicator
-                    resumeText={getEffectiveResumeText()}
-                    engineConfig={engineConfig}
-                    isDarkMode={isDarkMode}
-                  />
-                  <AdditionalTools 
-                    resumeText={getEffectiveResumeText()}
-                    jobDescription={jobDescription}
-                    targetRole={targetRole}
-                    companyName={companyName}
-                    isDarkMode={isDarkMode}
-                    engineConfig={engineConfig}
-                    selectedEngine={selectedEngine as any}
-                    onRestore={restoreVersion}
-                    currentResults={results}
-                    activeAudience={activeAudience}
-                    selectedAudiences={selectedAudiences}
-                    setResumeText={setResumeText}
-                    runOptimization={handleOptimize}
-                    currentHeadline={""}
-                    resumeSummary={data.personal_info.summary || ""}
-                    keySkills={typeof data.skills === 'object' && !Array.isArray(data.skills) ? Object.values(data.skills).flat() : (data.skills as string[])}
-                  />
 
                   {/* Google Drive Backups */}
                   {driveAccessToken && (
@@ -3963,10 +3945,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       )}
                     </div>
                   )}
+                  {activeTab === 'tools' && (
+                    <div className="flex flex-col items-center justify-center p-12 text-center space-y-4 opacity-60 h-full">
+                      <Zap className="w-8 h-8 text-emerald-500 mb-2" />
+                      <h3 className="font-bold text-lg">Tools are active</h3>
+                      <p className="text-sm">The tools section is currently expanded in the main preview pane for better visibility and a larger workspace.</p>
+                      <button onClick={() => setActiveTab('build')} className="mt-4 px-4 py-2 bg-emerald-500/10 text-emerald-500 rounded-lg text-xs font-bold uppercase tracking-widest hover:bg-emerald-500/20 transition-colors">
+                        Back to Builder
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
 
         {/* Vertical Resize Handle (Left/Right) */}
           {!isFocusMode && (
@@ -3982,7 +3972,53 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           {/* Result Section */}
           <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-neutral-100 dark:bg-neutral-900">
             <AnimatePresence mode="wait">
-              {isOptimizing && Object.keys(results).length === 0 ? (
+              {activeTab === 'tools' ? (
+                <motion.div 
+                  key="tools-pane"
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 1.02 }}
+                  className={`h-full flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar rounded-3xl border border-dashed ${
+                    isDarkMode ? 'bg-[#0a0a0a] border-white/5' : 'bg-white border-black/10'
+                  }`}
+                >
+                  <div className="max-w-4xl w-full mx-auto">
+                    <div className="mb-6 px-4 py-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                      <h2 className="text-xl font-bold text-emerald-500 flex items-center gap-2">
+                        <Zap className="w-5 h-5" /> Professional Career Tools
+                      </h2>
+                      <p className="text-sm opacity-70 mt-1">Enhance your application with AI-powered coaching, interview prep, and networking features.</p>
+                    </div>
+                    <CareerTools 
+                      isDarkMode={isDarkMode} 
+                      engineConfig={engineConfig} 
+                      selectedEngine={selectedEngine as any} 
+                      resumeData={activeAudience && results[activeAudience] ? results[activeAudience] : data}
+                      user={user}
+                    />
+                    <div className="mt-8">
+                      <AdditionalTools 
+                        resumeText={getEffectiveResumeText ? getEffectiveResumeText() : resumeText}
+                        jobDescription={jobDescription}
+                        targetRole={targetRole}
+                        companyName={companyName}
+                        isDarkMode={isDarkMode}
+                        engineConfig={engineConfig}
+                        selectedEngine={selectedEngine as any}
+                        onRestore={restoreVersion}
+                        currentResults={results}
+                        activeAudience={activeAudience}
+                        selectedAudiences={selectedAudiences}
+                        setResumeText={setResumeText}
+                        runOptimization={handleOptimize}
+                        currentHeadline={""}
+                        resumeSummary={data?.personal_info?.summary || ""}
+                        keySkills={typeof data?.skills === 'object' && !Array.isArray(data?.skills) ? Object.values(data.skills).flat() : (data?.skills as string[]) || []}
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              ) : isOptimizing && Object.keys(results).length === 0 ? (
                 <motion.div 
                   key="optimizing"
                   initial={{ opacity: 0 }}
@@ -4287,32 +4323,30 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           id="resume-container"
                           className={`transition-all duration-300 relative ${activeSection ? 'ring-2 ring-emerald-500/20' : ''} ${isDownloading ? 'legacy-colors' : 'shadow-2xl'}`}
                         >
-                          {previewMode === 'standard' ? (
-                            <>
-                              {/* Page 1 */}
-                              <div className={`resume-page ${isDownloading ? 'page-break-after-always' : 'mb-8'}`}>
-                                {renderSection('header')}
-                                {renderSection('summary')}
-                                {renderSection('skills')}
-                                {renderSection('certifications')}
-                                {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(0, 3))}
-                              </div>
+                        {previewMode === 'standard' ? (
+                          <>
+                            {/* Page 1 */}
+                            <div className={`resume-page ${isDownloading ? 'page-break-after-always' : 'mb-8'}`}>
+                              {renderSection('header')}
+                              {renderSection('summary')}
+                              {renderSection('skills')}
+                              {renderSection('certifications')}
+                              {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(0, 3))}
+                            </div>
 
-                              {/* Page 2 */}
-                              <div className="resume-page">
-                                {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(3), true)}
-                                {renderSection('projects')}
-                                {renderSection('education')}
-                              </div>
-                            </>
-                          ) : (
-                            renderSimplifiedResume()
-                          )}
+                            {/* Page 2 */}
+                            <div className="resume-page">
+                              {renderSection('experience', (results[activeAudience!]?.experience || data.experience).slice(3), true)}
+                              {renderSection('projects')}
+                              {renderSection('education')}
+                            </div>
+                          </>
+                        ) : (
+                          renderSimplifiedResume()
+                        )}
                         </div>
                       </div>
                     </div>
-
-                    {/* Bottom Download Button */}
                     <div className="p-2 border-t border-white/10 flex justify-center bg-white/5">
                       <button 
                         onClick={downloadPDF}
