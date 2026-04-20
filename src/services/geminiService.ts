@@ -1,8 +1,8 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import { routeTask, RouterConfig } from "./aiRouter";
-import { SuitabilityResult } from "../types";
+import { SuitabilityResult, Certification } from "../types";
 
 export interface OptimizationResult {
   personal_info: {
@@ -26,7 +26,7 @@ export interface OptimizationResult {
     duration: string;
     bullets: string[];
   }[];
-  certifications: string[];
+  certifications: (string | Certification)[];
   projects: { title: string; description: string }[];
   education: string[];
   ats_keywords_from_jd: string[];
@@ -132,19 +132,23 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
         throw new Error("Gemini API key is missing. Please provide your own key in settings or contact the administrator.");
       }
 
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const genModel = genAI.getGenerativeModel({ 
+      const ai = new GoogleGenAI({ apiKey });
+      
+      // Configure thinking level based on model instructions or user preferences
+      // Note: gemini-3 series models support thinkingLevel
+      const isThinkingModel = model.includes('thinking') || model.includes('pro');
+      
+      const response = await ai.models.generateContent({ 
         model: model || "gemini-3.1-pro-preview",
-        generationConfig: {
+        contents: prompt,
+        config: {
           responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
+          thinkingConfig: isThinkingModel ? { thinkingLevel: ThinkingLevel.HIGH } : undefined
         }
       });
 
-      const result = await genModel.generateContent(prompt);
-      const response = result.response;
-
       return {
-        result: response.text(),
+        result: response.text || "",
         usage: {
           promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
           candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
@@ -224,7 +228,7 @@ export async function evaluateSuitability(
   const prompt = `
 You are an expert technical recruiter screening a candidate's resume against a job description.
 Your goal is to quickly evaluate if the candidate is a good fit, a stretch, or not recommended.
-Look for hard dealbreakers (years of experience, mandatory skills, clearance, role level).
+Additionally, perform a focus "Red Team" Audit identifying flaws in wording, metrics, and alignment.
 
 RESUME:
 ${resumeText}
@@ -238,7 +242,15 @@ Return ONLY a JSON object with the following structure:
   "matchScore": number (0-100),
   "dealbreakers": string[] (list of major missing requirements, empty if none),
   "strengths": string[] (list of key matching qualifications),
-  "reasoning": string (1-2 sentences explaining the verdict)
+  "reasoning": string (1-2 sentences explaining the verdict),
+  "readinessScore": number (0-100 overall professional readiness / resume quality),
+  "critique": [
+    {
+      "category": "e.g., Metrics/Impact",
+      "feedback": "Detailed constructive criticism",
+      "severity": "low" | "medium" | "high"
+    }
+  ]
 }
 `;
 
@@ -387,7 +399,9 @@ OUTPUT SCHEMA (MUST MATCH EXACTLY):
   "experience": [ { "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
   "projects": [ { "title": "string", "description": "string" } ],
   "education": ["string"],
-  "certifications": ["string"],
+  "certifications": [
+    { "name": "string", "issuer": "string", "date": "string" }
+  ],
   "ats_keywords_from_jd": ["string"],
   "ats_keywords_added_to_resume": ["string"],
   "keyword_gap": ["string"],
@@ -532,6 +546,42 @@ export async function analyzeSkillGap(
     return JSON.parse(resultText || '{"missing":[], "present":[]}');
   } catch (error) {
     console.error("Error analyzing skill gap:", error);
+    throw error;
+  }
+}
+
+export async function analyzeResumeCritique(
+  resumeText: string,
+  jobDescription: string,
+  config: RouterConfig
+): Promise<{ score: number, critique: { category: string, feedback: string, severity: 'low' | 'medium' | 'high' }[] }> {
+  const routedConfig = routeTask('extract_skills', config);
+  const prompt = `
+      You are a brutal but constructive FAANG Recruiter. Audit this resume against the Job Description.
+      Be hyper-critical. Find flaws in wording, metrics (or lack thereof), layout hints, and alignment.
+      
+      Return a JSON object:
+      {
+        "score": number (0-100 overall professional readiness),
+        "critique": [
+          {
+            "category": "e.g., Metrics/Impact",
+            "feedback": "Detailed constructive criticism",
+            "severity": "low" | "medium" | "high"
+          }
+        ]
+      }
+
+      RESUME: ${resumeText}
+      JOB DESCRIPTION: ${jobDescription}
+    `;
+
+  try {
+    const data = await callAI(prompt, routedConfig.model, routedConfig.engine, routedConfig.apiKey);
+    const resultText = extractJson(data.result || "");
+    return JSON.parse(resultText || '{"score":0, "critique":[]}');
+  } catch (error) {
+    console.error("Error analyzing resume critique:", error);
     throw error;
   }
 }

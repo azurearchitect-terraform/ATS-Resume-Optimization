@@ -35,6 +35,10 @@ export const CareerQuiz: React.FC<CareerQuizProps> = ({ toolId, title, isDarkMod
         return "You are a career transition specialist. Conduct a Career Change Quiz. Ask questions to evaluate the user's transferable skills, interests, and professional goals. Suggest 3-5 new career paths that match their profile and explain why.";
       case 'tech':
         return "You are a tech career mentor. Conduct a Tech Career Quiz. Ask questions about the user's coding experience, problem-solving style, and interests (e.g., frontend, backend, data, security, AI). Recommend the best tech career paths for them.";
+      case 'interview_coach':
+        return "You are a seasoned hiring manager. Conduct an interactive Mock Interview. Ask one interview question at a time (mix of behavioral and role-specific). After the user answers, provide brief constructive feedback (STAR method) and then move to the next question. Conduct 5 questions total.";
+      case 'negotiation':
+        return "You are a compensation specialist. Help the user prepare for a salary negotiation. Ask about their current role, target role, and any offers they have. Provide data-backed strategies and practice the 'Big Ask' scenario with them.";
       default:
         return "You are a helpful career assistant.";
     }

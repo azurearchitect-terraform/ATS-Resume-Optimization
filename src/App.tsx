@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { 
   FileText, 
   Briefcase, 
@@ -39,54 +39,58 @@ import {
   ExternalLink,
   Edit2,
   Check,
-  X
+  X,
+  ShieldCheck,
+  ShieldAlert,
+  Linkedin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableSection } from './components/SortableSection';
-import { CareerTools } from './components/CareerTools';
-import { AdditionalTools } from './components/AdditionalTools';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Toast, ConfirmDialog } from './components/UI.tsx';
 import { MODE_DESCRIPTIONS, AUDIENCES, MODEL_PRICING } from './constants';
 import { downloadDOCX, downloadJSON } from './services/exportService';
 import { useResumeStore } from './store';
-import { ResumeData, SuitabilityResult } from './types';
+import { ResumeData, SuitabilityResult, Certification } from './types';
 import { detectOverflow } from './overflowDetection';
 import { useFormatting, DEFAULT_STYLE } from './context/FormattingContext';
 import { optimizeResume, fetchJobDescription, analyzeBestAudiences, evaluateSuitability, OptimizationResult, EngineType, EngineConfig } from './services/geminiService';
 import { RouterConfig } from './services/aiRouter';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { extractTextFromPDFFile } from './lib/pdfUtils';
 import { saveAs } from 'file-saver';
+import { LinkedInImporter } from './components/LinkedInImporter';
 
 import { auth, db } from './firebase';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut, 
+  User,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail
+} from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp, collection, addDoc, getDocs, query, orderBy, increment, onSnapshot } from 'firebase/firestore';
 import { handleFirestoreError } from './lib/firebaseUtils';
 import { OperationType } from './types';
-import { AdminDashboard } from './components/AdminDashboard';
+import { DriveFolderPicker } from './components/DriveFolderPicker';
+import { AuthModal } from './components/AuthModal';
 
-// Initialize PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+// Lazy load heavy components for better initial performance
+const CareerTools = lazy(() => import('./components/CareerTools').then(m => ({ default: m.CareerTools })));
+const AdditionalTools = lazy(() => import('./components/AdditionalTools').then(m => ({ default: m.AdditionalTools })));
+const AdminDashboard = lazy(() => import('./components/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
+const ProfessionalWelcomePage = lazy(() => import('./components/ProfessionalWelcomePage').then(m => ({ default: m.ProfessionalWelcomePage })));
 
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-emerald-950">
-      <div className="w-full max-w-md p-8 bg-[#141414] rounded-3xl border border-white/10 shadow-2xl space-y-6 text-center">
-        <h1 className="text-3xl font-black text-white tracking-tight">AI Resume Optimizer</h1>
-        <p className="text-emerald-400/70">Securely optimize your resume for architect-level roles.</p>
-        <button
-          onClick={onLogin}
-          className="w-full py-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold transition-all shadow-lg shadow-emerald-500/20"
-        >
-          Sign in with Google
-        </button>
-      </div>
-    </div>
-  );
-}
+const LoadingSpinner = () => (
+  <div className="flex flex-col items-center justify-center p-12">
+    <div className="w-8 h-8 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
+    <span className="text-xs font-bold uppercase tracking-widest opacity-30">Loading Module...</span>
+  </div>
+);
 
 type OptimizationMode = 'conservative' | 'balanced' | 'aggressive';
 
@@ -105,6 +109,24 @@ export default function App() {
   const [newDriveFileName, setNewDriveFileName] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [isDriveConnected, setIsDriveConnected] = useState(false);
+  const [selectedDriveFolder, setSelectedDriveFolder] = useState<{id: string, name: string} | null>(() => {
+    const saved = localStorage.getItem('selectedDriveFolder');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [isSelectingFolder, setIsSelectingFolder] = useState(false);
+  const [firestoreReadCount, setFirestoreReadCount] = useState<number>(() => {
+    const saved = localStorage.getItem('firestoreReadCount');
+    return saved ? JSON.parse(saved) : 0;
+  });
+
+  const safeGetDoc = async (docRef: any) => {
+    setFirestoreReadCount(prev => {
+      const next = prev + 1;
+      localStorage.setItem('firestoreReadCount', JSON.stringify(next));
+      return next;
+    });
+    return await getDoc(docRef);
+  };
   const [driveAccessToken, setDriveAccessToken] = useState<string | null>(() => {
     return localStorage.getItem('driveAccessToken');
   });
@@ -117,6 +139,7 @@ export default function App() {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
 
+  // Protect against accidental tab close
   useEffect(() => {
     // Clean up URL parameters if they exist (like ?origin=...)
     if (window.location.search) {
@@ -124,23 +147,22 @@ export default function App() {
       url.search = '';
       window.history.replaceState({}, '', url.toString());
     }
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'Are you sure you want to leave? Your changes may not be synced.';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   useEffect(() => {
     localStorage.setItem('versioningEnabled', versioningEnabled.toString());
-  }, [versioningEnabled]);
-
-  useEffect(() => {
     localStorage.setItem('isAutosaveEnabled', isAutosaveEnabled.toString());
-  }, [isAutosaveEnabled]);
-
-  useEffect(() => {
-    if (driveAccessToken) {
-      localStorage.setItem('driveAccessToken', driveAccessToken);
-    } else {
-      localStorage.removeItem('driveAccessToken');
-    }
-  }, [driveAccessToken]);
+    localStorage.setItem('selectedDriveFolder', selectedDriveFolder ? JSON.stringify(selectedDriveFolder) : '');
+    localStorage.setItem('driveAccessToken', driveAccessToken || '');
+  }, [versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken]);
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void, onCancel: () => void } | null>(null);
@@ -187,11 +209,14 @@ export default function App() {
               if (typeof data.settings.isDriveConnected === 'boolean') {
                 setIsDriveConnected(data.settings.isDriveConnected);
               }
+              if (data.settings.selectedDriveFolder) {
+                setSelectedDriveFolder(data.settings.selectedDriveFolder);
+              }
             }
             if (data.encryptedApiKey) {
               setEncryptedApiKey(data.encryptedApiKey);
-              setOpenaiApiKey('••••••••••••••••'); // Placeholder
-              setGeminiApiKey('••••••••••••••••'); // Placeholder
+              setOpenaiApiKey(''); // Placeholder
+              setGeminiApiKey(''); // Placeholder
               setIsApiKeySaved(true);
             }
             if (data.driveAccessToken) {
@@ -330,7 +355,7 @@ export default function App() {
   const handleConnectDrive = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      provider.addScope('https://www.googleapis.com/auth/drive.file');
+      provider.addScope('https://www.googleapis.com/auth/drive');
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential?.accessToken) {
@@ -356,35 +381,100 @@ export default function App() {
   };
 
   const handleLogin = async () => {
+    setIsAuthModalOpen(true);
+  };
+
+  const handleEmailLogin = async (email: string, pass: string) => {
     try {
-      const provider = new GoogleAuthProvider();
-      // Add Drive scope for autoconnect
-      provider.addScope('https://www.googleapis.com/auth/drive.file');
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setDriveAccessToken(credential.accessToken);
-        setIsDriveConnected(true);
-        // Save token to Firestore for cross-device autoconnect
-        if (result.user) {
-          await setDoc(doc(db, 'users', result.user.uid), {
-            driveAccessToken: credential.accessToken,
-            settings: { isDriveConnected: true }
-          }, { merge: true });
-        }
-      }
+      await signInWithEmailAndPassword(auth, email, pass);
     } catch (err: any) {
-      console.error("Login Error:", err);
-      if (err.code === 'auth/cancelled-popup-request') {
-        showToast("Login cancelled. Please complete the Google popup.", "error");
-      } else {
-        showToast("Failed to login.", "error");
+      console.error("Email Login Error:", err);
+      let msg = "Failed to login.";
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        msg = "Invalid email or password.";
       }
+      throw new Error(msg);
     }
+  };
+
+  const handleEmailSignUp = async (email: string, pass: string) => {
+    try {
+      await createUserWithEmailAndPassword(auth, email, pass);
+      showToast("Account created successfully!", "success");
+    } catch (err: any) {
+      console.error("Sign Up Error:", err);
+      let msg = "Failed to create account.";
+      if (err.code === 'auth/email-already-in-use') {
+        msg = "Email already in use.";
+      } else if (err.code === 'auth/weak-password') {
+        msg = "Password is too weak.";
+      }
+      throw new Error(msg);
+    }
+  };
+
+  const handlePasswordReset = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+      showToast("Password reset email sent!", "info");
+    } catch (err: any) {
+      console.error("Reset Password Error:", err);
+      throw new Error("Failed to send reset email.");
+    }
+  };
+
+  // Sync all user data to Firestore
+  const syncAllData = async () => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, 'users', user.uid);
+      const dataToSync = {
+        masterResume: resumeText,
+        customPrompt: customPrompt,
+        settings: {
+          isDriveConnected,
+          versioningEnabled,
+          isAutosaveEnabled,
+          selectedDriveFolder
+        },
+        driveAccessToken,
+        updatedAt: serverTimestamp()
+      };
+      
+      // Use setDoc for standard sync
+      await setDoc(docRef, dataToSync, { merge: true });
+      showToast('All data synced successfully', 'success');
+    } catch (err) {
+      console.error("Sync Error:", err);
+      showToast('Failed to sync data', 'error');
+    }
+  };
+
+  // Dedicated sync for browser closure
+  const syncOnClose = () => {
+    if (!user) return;
+    const docRef = doc(db, 'users', user.uid);
+    const dataToSync = {
+        masterResume: resumeText,
+        customPrompt: customPrompt,
+        settings: {
+          isDriveConnected,
+          versioningEnabled,
+          isAutosaveEnabled
+        },
+        driveAccessToken,
+        updatedAt: new Date() // Use client Date for beacon
+    };
+    
+    // Beacon cannot send complex Firestore objects, so we would normally 
+    // need an API endpoint. Since we are client-only in this app, 
+    // we must rely on the user clicking logout or staying on the page.
+    // We will stick to the 'beforeunload' warning as the primary safety net.
   };
 
   const handleLogout = async () => {
     try {
+      await syncAllData();
       await signOut(auth);
     } catch (err) {
       console.error("Logout Error:", err);
@@ -406,10 +496,10 @@ export default function App() {
       let finalEncryptedKey = encryptedApiKey;
 
       // If the user entered a new API key (not the placeholder)
-      if ((openaiApiKey && openaiApiKey !== '••••••••••••••••') || (geminiApiKey && geminiApiKey !== '••••••••••••••••')) {
+      if ((openaiApiKey && openaiApiKey !== '') || (geminiApiKey && geminiApiKey !== '')) {
         const keysToEncrypt = JSON.stringify({
-          gemini: geminiApiKey !== '••••••••••••••••' ? geminiApiKey : '',
-          openai: openaiApiKey !== '••••••••••••••••' ? openaiApiKey : ''
+          gemini: geminiApiKey !== '' ? geminiApiKey : '',
+          openai: openaiApiKey !== '' ? openaiApiKey : ''
         });
 
         const response = await fetch('/api/encrypt-key', {
@@ -424,8 +514,8 @@ export default function App() {
         const data = await response.json();
         finalEncryptedKey = data.encryptedKey;
         setEncryptedApiKey(finalEncryptedKey);
-        if (openaiApiKey) setOpenaiApiKey('••••••••••••••••');
-        if (geminiApiKey) setGeminiApiKey('••••••••••••••••');
+        if (openaiApiKey) setOpenaiApiKey('');
+        if (geminiApiKey) setGeminiApiKey('');
         setIsApiKeySaved(true);
       }
 
@@ -485,6 +575,7 @@ export default function App() {
   });
   const [jobDescription, setJobDescription] = useState('');
   const [activeTab, setActiveTab] = useState<'build' | 'style' | 'assets' | 'profile' | 'tools'>('build');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [targetRole, setTargetRole] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [mode, setMode] = useState<OptimizationMode>('balanced');
@@ -493,6 +584,8 @@ export default function App() {
   const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
   const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
   const audienceDropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const jdTextareaRef = useRef<HTMLTextAreaElement>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -546,36 +639,28 @@ export default function App() {
   const [profileLinkedInText, setProfileLinkedInText] = useState(() => localStorage.getItem('profileLinkedInText') || '');
 
   useEffect(() => {
-    localStorage.setItem('profileName', profileName);
-  }, [profileName]);
-
-  useEffect(() => {
-    localStorage.setItem('profileLocation', profileLocation);
-  }, [profileLocation]);
-
-  useEffect(() => {
-    localStorage.setItem('profileEmail', profileEmail);
-  }, [profileEmail]);
-
-  useEffect(() => {
-    localStorage.setItem('profilePhone', profilePhone);
-  }, [profilePhone]);
-
-  useEffect(() => {
-    localStorage.setItem('profileLinkedIn', profileLinkedIn);
-  }, [profileLinkedIn]);
-
-  useEffect(() => {
-    localStorage.setItem('profileLinkedInText', profileLinkedInText);
-  }, [profileLinkedInText]);
-
-  useEffect(() => {
-    localStorage.setItem('resumeText', resumeText);
-  }, [resumeText]);
-
-  useEffect(() => {
-    localStorage.setItem('linkedInUrl', linkedInUrl);
-  }, [linkedInUrl]);
+    localStorage.setItem('profileName', profileName || '');
+    localStorage.setItem('profileLocation', profileLocation || '');
+    localStorage.setItem('profileEmail', profileEmail || '');
+    localStorage.setItem('profilePhone', profilePhone || '');
+    localStorage.setItem('profileLinkedIn', profileLinkedIn || '');
+    localStorage.setItem('profileLinkedInText', profileLinkedInText || '');
+    localStorage.setItem('resumeText', resumeText || '');
+    localStorage.setItem('linkedInUrl', linkedInUrl || '');
+    localStorage.setItem('linkedInPdfText', linkedInPdfText || '');
+    localStorage.setItem('linkedInFileName', linkedInFileName || '');
+  }, [
+    profileName, 
+    profileLocation, 
+    profileEmail, 
+    profilePhone, 
+    profileLinkedIn, 
+    profileLinkedInText, 
+    resumeText, 
+    linkedInUrl, 
+    linkedInPdfText, 
+    linkedInFileName
+  ]);
 
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [resumeVersions, setResumeVersions] = useState<any[]>([]);
@@ -599,13 +684,24 @@ export default function App() {
     }
   }, [user]);
 
+  // Auto-fetch Job Description when a URL is pasted
   useEffect(() => {
-    localStorage.setItem('linkedInPdfText', linkedInPdfText);
-  }, [linkedInPdfText]);
+    const timer = setTimeout(() => {
+      const isValidUrl = (url: string) => {
+        try {
+          return Boolean(new URL(url));
+        } catch (e) {
+          return false;
+        }
+      };
 
-  useEffect(() => {
-    localStorage.setItem('linkedInFileName', linkedInFileName);
-  }, [linkedInFileName]);
+      if (jobUrl && isValidUrl(jobUrl) && !jobDescription && !isFetchingJob) {
+        handleFetchJobDescription();
+      }
+    }, 1000); // Wait 1 second after typing stops
+
+    return () => clearTimeout(timer);
+  }, [jobUrl]);
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
@@ -791,7 +887,8 @@ export default function App() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   };
 
-  const fetchTokenUsageManual = async () => {
+  // Fetch token usage manually
+  const fetchTokenUsage = async () => {
     if (!user) return;
     setIsRefreshingTokens(true);
     const currentMonth = getCurrentMonthStr();
@@ -799,41 +896,9 @@ export default function App() {
     const usageRef = doc(db, path);
     
     try {
-      const docSnap = await getDoc(usageRef);
+      const docSnap = await safeGetDoc(usageRef);
       if (docSnap.exists()) {
-        const data = docSnap.data();
-        setTokenUsage({
-          gemini: data.gemini || { input: 0, output: 0 },
-          openai: data.openai || { input: 0, output: 0 }
-        });
-      }
-      showToast('Token usage updated', 'success');
-    } catch (err) {
-      console.error('Failed to refresh tokens:', err);
-      showToast('Failed to refresh tokens', 'error');
-    } finally {
-      setIsRefreshingTokens(false);
-    }
-  };
-
-  // Fetch token usage from Firestore on login/date change
-  useEffect(() => {
-    if (!user) {
-      setTokenUsage({
-        gemini: { input: 0, output: 0 },
-        openai: { input: 0, output: 0 }
-      });
-      return;
-    }
-
-    const currentMonth = getCurrentMonthStr();
-    const path = `users/${user.uid}/tokenUsage/${currentMonth}`;
-    const usageRef = doc(db, path);
-    
-    // Use onSnapshot for real-time cross-device sync
-    const unsubscribe = onSnapshot(usageRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+        const data = docSnap.data() as any;
         setTokenUsage({
           gemini: data.gemini || { input: 0, output: 0 },
           openai: data.openai || { input: 0, output: 0 }
@@ -844,12 +909,15 @@ export default function App() {
           openai: { input: 0, output: 0 }
         });
       }
-    }, (err) => {
+      showToast('Token usage updated', 'success');
+    } catch (err: any) {
       handleFirestoreError(err, OperationType.GET, path);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
+      console.error('Failed to refresh tokens:', err);
+      showToast('Failed to refresh tokens', 'error');
+    } finally {
+      setIsRefreshingTokens(false);
+    }
+  };
 
   // Sync token usage to Firestore when it changes
   const syncTokenUsage = async (engine: 'gemini' | 'openai', input: number, output: number) => {
@@ -906,7 +974,8 @@ export default function App() {
                 pdfData: base64data,
                 fileName: fileName,
                 versioningEnabled: false,
-                accessToken: driveAccessToken
+                accessToken: driveAccessToken,
+                parentFolderId: selectedDriveFolder?.id
               })
             });
             const data = await response.json();
@@ -1000,7 +1069,8 @@ export default function App() {
             pdfData: base64data,
             fileName: `${pdfTitle}.pdf`,
             versioningEnabled: versioningEnabled,
-            accessToken: driveAccessToken
+            accessToken: driveAccessToken,
+            parentFolderId: selectedDriveFolder?.id
           })
         });
         
@@ -1140,18 +1210,8 @@ export default function App() {
     setIsExtracting(true);
     setFileName(file.name);
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
-      
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((item: any) => item.str).join(' ');
-        fullText += pageText + '\n';
-      }
-      
-      setResumeText(fullText);
+      const text = await extractTextFromPDFFile(file);
+      setResumeText(text);
     } catch (err) {
       console.error('Error extracting PDF text:', err);
       setError('Failed to extract text from PDF. Please try pasting the text manually.');
@@ -1164,18 +1224,8 @@ export default function App() {
     setIsExtractingLinkedIn(true);
     setLinkedInFileName(file.name);
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
-      
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((item: any) => item.str).join(' ');
-        fullText += pageText + '\n';
-      }
-      
-      setLinkedInPdfText(fullText);
+      const text = await extractTextFromPDFFile(file);
+      setLinkedInPdfText(text);
     } catch (err) {
       console.error('Error extracting LinkedIn PDF text:', err);
       setError('Failed to extract text from LinkedIn PDF.');
@@ -1643,7 +1693,7 @@ ${exp.bullets.join('\n')}
 ${projectsText ? `PROJECTS\n${projectsText}\n` : ''}
 
 CERTIFICATIONS
-${(res.certifications || [] as string[]).join('\n')}
+${(res.certifications || [] as any[]).map(cert => typeof cert === 'string' ? cert : `${cert.name} - ${cert.issuer} (${cert.date})`).join('\n')}
 
 EDUCATION
 ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${edu.degree} - ${edu.institution} (Expected ${edu.expected_completion})`).join('\n')}
@@ -1851,7 +1901,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               pdfData: base64data,
               fileName: `${pdfTitle}.pdf`,
               versioningEnabled: versioningEnabled,
-              accessToken: driveAccessToken
+              accessToken: driveAccessToken,
+              parentFolderId: selectedDriveFolder?.id
             })
           });
           
@@ -1875,16 +1926,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
         }
       };
 
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      
-      link.download = `${pdfTitle}.pdf`;
-      
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      // Trigger download
+      saveAs(blob, `${pdfTitle}.pdf`);
+      showToast('PDF Downloaded successfully!', 'success');
 
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
@@ -1992,8 +2036,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
           <div className="mb-4">
             <h2 className="text-[12px] font-bold border-b mb-1 uppercase tracking-wider">Certifications</h2>
             <ul className="list-disc ml-4 text-[10.5px] space-y-0.5 opacity-90">
-              {res.certifications.map((cert: string, i: number) => (
-                <li key={i}>{cert}</li>
+              {res.certifications.map((cert: any, i: number) => (
+                <li key={i}>
+                  {typeof cert === 'string' ? cert : `${cert.name} - ${cert.issuer} (${cert.date})`}
+                </li>
               ))}
             </ul>
           </div>
@@ -2049,13 +2095,13 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             </h1>
             <div className="font-semibold opacity-80 border-t-2 border-black/10 pt-3 flex justify-center items-center gap-x-4 gap-y-1 flex-wrap" style={{ fontSize: '11px', lineHeight: '1.2' }}>
               <span className="whitespace-nowrap">{personalInfo.location}</span>
-              <span className="opacity-30">•</span>
+              <span className="opacity-30"></span>
               <span className="whitespace-nowrap">{personalInfo.email}</span>
-              <span className="opacity-30">•</span>
+              <span className="opacity-30"></span>
               <span className="whitespace-nowrap">{personalInfo.phone}</span>
               {personalInfo.linkedin && (
                 <>
-                  <span className="opacity-30">•</span>
+                  <span className="opacity-30"></span>
                   <span className="whitespace-nowrap">LinkedIn: {personalInfo.linkedinText || personalInfo.linkedin.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}</span>
                 </>
               )}
@@ -2160,10 +2206,20 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
               Professional Certifications
             </h2>
             <div className="grid grid-cols-1 gap-1">
-              {(results[activeAudience!]?.certifications || data.certifications || []).map((cert, i) => (
-                <div key={i} className="resume-bullet-item">
-                  <div className="resume-bullet-dot" />
-                  <span className="resume-bullet-text opacity-90 font-medium">{cert}</span>
+              {(results[activeAudience!]?.certifications || data.certifications || []).map((cert: any, i) => (
+                <div key={i} className="resume-bullet-item flex justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="resume-bullet-dot" />
+                    <span className="resume-bullet-text opacity-90 font-medium">
+                      {typeof cert === 'string' ? cert : cert.name}
+                    </span>
+                  </div>
+                  {typeof cert !== 'string' && (
+                    <div className="text-[10px] opacity-60 flex gap-2 italic">
+                      <span>{cert.issuer}</span>
+                      <span>{cert.date}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2298,12 +2354,30 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
   }
 
   if (isAuthReady && !user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return (
+      <ProfessionalWelcomePage 
+        onLogin={handleLogin} 
+        onEmailLogin={handleEmailLogin}
+        onEmailSignUp={handleEmailSignUp}
+        onPasswordReset={handlePasswordReset}
+      />
+    );
   }
 
   return (
     <div className={`h-screen flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'} font-sans selection:bg-emerald-500/30`}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <DriveFolderPicker 
+        isOpen={isSelectingFolder}
+        onClose={() => setIsSelectingFolder(false)}
+        onSelect={(folder) => {
+          setSelectedDriveFolder(folder);
+          setIsSelectingFolder(false);
+          showToast(`Target folder set to: ${folder.name}`, 'success');
+        }}
+        accessToken={driveAccessToken}
+        isDarkMode={isDarkMode}
+      />
       {confirmDialog && (
         <ConfirmDialog 
           message={confirmDialog.message} 
@@ -2647,6 +2721,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           isDarkMode ? 'bg-white/5 border-white/10 hover:border-emerald-500/50' : 'bg-[#F9F9F9] border-black/10 hover:border-emerald-500/50'
                         }`}>
                           <input 
+                            ref={fileInputRef}
                             type="file"
                             accept=".pdf,.txt"
                             onChange={handleFileUpload}
@@ -2751,7 +2826,8 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                  >
                                    {selectedEngine === 'gemini' && (
                                      <>
-                                       <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Recommended)</option>
+                                       <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Deep Thinking)</option>
+                                        <option value="gemini-2.0-flash-thinking-exp-01-21">Gemini Thinking (Experimental)</option>
                                        <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
                                        <option value="gemini-flash-latest">Gemini Flash Latest</option>
                                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</option>
@@ -2759,11 +2835,9 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                    )}
                                    {selectedEngine === 'openai' && (
                                      <>
-                                       <option value="gpt-4o">GPT-4o (Premium)</option>
-                                       <option value="gpt-4o-mini">GPT-4o-mini (Fast)</option>
-                                       <option value="o1-preview">o1-preview (Reasoning)</option>
-                                       <option value="o1-mini">o1-mini (Reasoning Fast)</option>
-                                     </>
+                                       <option value="gpt-4o-mini">GPT-4o Mini (Latest & Fast)</option>
+                                        <option value="gpt-4o">GPT-4o (Premium)</option>
+                                                                                                                                                          </>
                                    )}
                                  </select>
                                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
@@ -2787,104 +2861,47 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                              </div>
                            )}
 
-                           <div className="space-y-4">
-                             {/* Removed Authentication Keys message per user request */}
-                           </div>
-                         </div>
-                       </div>
-                     </div>
-                     {/* LinkedIn Profile */}
-                      <div>
-                        <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>LinkedIn Profile (Optional)</label>
-                        <div className="space-y-3">
-                          <div className="flex gap-2">
-                            <input 
-                              type="url"
-                              placeholder="https://linkedin.com/in/yourprofile"
-                              className={`flex-1 px-4 py-3 text-sm border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
-                                isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
-                              }`}
-                              value={linkedInUrl}
-                              onChange={(e) => setLinkedInUrl(e.target.value)}
-                            />
-                          </div>
-                          <div className={`relative border-2 border-dashed rounded-xl p-3 transition-all ${
-                            isDarkMode ? 'bg-white/5 border-white/10 hover:border-emerald-500/50' : 'bg-[#F9F9F9] border-black/10 hover:border-emerald-500/50'
-                          }`}>
-                            <input 
-                              type="file"
-                              accept=".pdf,.txt"
-                              onChange={handleLinkedInFileUpload}
-                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div className="flex items-center justify-center gap-2">
-                              {isExtractingLinkedIn ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                                  <span className="text-xs font-medium opacity-60">Extracting...</span>
-                                </div>
-                              ) : linkedInFileName ? (
-                                <div className="flex items-center justify-between w-full px-2">
-                                  <div className="flex items-center gap-2">
-                                    <FileText className="w-4 h-4 text-emerald-500" />
-                                    <span className="text-xs font-bold truncate max-w-[150px]">{linkedInFileName}</span>
-                                  </div>
-                                  <button 
-                                    onClick={(e) => { e.stopPropagation(); setLinkedInFileName(''); setLinkedInPdfText(''); }}
-                                    className="text-[10px] font-bold text-red-400 hover:text-red-300 uppercase tracking-widest z-20 relative"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                              ) : (
-                                <>
-                                  <Upload className="w-4 h-4 opacity-30" />
-                                  <span className="text-xs font-medium opacity-60">
-                                    Or upload LinkedIn PDF export
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
                         </div>
                       </div>
+                    </div>
+
+                      <LinkedInImporter 
+                        linkedInUrl={linkedInUrl}
+                        setLinkedInUrl={setLinkedInUrl}
+                        linkedInFileName={linkedInFileName}
+                        setLinkedInFileName={setLinkedInFileName}
+                        setLinkedInPdfText={setLinkedInPdfText}
+                        linkedInPdfText={linkedInPdfText}
+                        isDarkMode={isDarkMode}
+                        isExtracting={isExtractingLinkedIn}
+                        setIsExtracting={setIsExtractingLinkedIn}
+                        onImport={(text) => {
+                          showToast("LinkedIn data loaded successfully!", "success");
+                        }}
+                      />
+
                       {/* Job Description */}
                       <div>
                         <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Job Description</label>
                         <div className="space-y-3">
-                          <div className="flex flex-col sm:flex-row gap-2">
+                          <div className="relative group">
                             <input 
                               type="url"
-                              placeholder="Job Posting URL (Optional)"
-                              className={`flex-1 px-4 py-3 text-sm border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all ${
+                              placeholder="Paste Job Posting URL here (Auto-extracting...)"
+                              className={`w-full px-4 py-3 text-sm border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all pr-12 ${
                                 isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
                               }`}
                               value={jobUrl}
                               onChange={(e) => setJobUrl(e.target.value)}
                             />
-                            <button
-                              onClick={handleFetchJobDescription}
-                              disabled={!jobUrl || isFetchingJob}
-                              className={`px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 min-w-[100px] ${
-                                isFetchingJob || !jobUrl
-                                  ? (isDarkMode ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-black/5 text-black/30 cursor-not-allowed')
-                                  : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20'
-                              }`}
-                            >
-                              {isFetchingJob ? (
-                                <>
-                                  <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                  Fetching...
-                                </>
-                              ) : (
-                                <>
-                                  <Download className="w-3 h-3" />
-                                  Fetch
-                                </>
-                              )}
-                            </button>
+                            {isFetchingJob && (
+                              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                                <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                              </div>
+                            )}
                           </div>
                           <textarea 
+                            ref={jdTextareaRef}
                             placeholder="Paste the target job description here..."
                             className={`w-full h-32 p-4 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-y text-sm leading-relaxed ${
                               isDarkMode ? 'bg-white/5 border-white/10 text-white' : 'bg-[#F9F9F9] border-black/5 text-black'
@@ -2957,7 +2974,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     <ul className="mt-1 space-y-1">
                                       {suitabilityResult.dealbreakers.map((db, i) => (
                                         <li key={i} className={`text-xs flex items-start gap-1.5 ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
-                                          <span className="text-red-500 mt-0.5">•</span> {db}
+                                          <span className="text-red-500 mt-0.5"></span> {db}
                                         </li>
                                       ))}
                                     </ul>
@@ -2965,22 +2982,57 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 )}
 
                                 {suitabilityResult.strengths.length > 0 && (
-                                  <div>
+                                  <div className="mb-4">
                                     <span className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Key Strengths</span>
                                     <ul className="mt-1 space-y-1">
                                       {suitabilityResult.strengths.map((str, i) => (
                                         <li key={i} className={`text-xs flex items-start gap-1.5 ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
-                                          <span className="text-emerald-500 mt-0.5">•</span> {str}
+                                          <span className="text-emerald-500 mt-0.5"></span> {str}
                                         </li>
                                       ))}
                                     </ul>
                                   </div>
                                 )}
+
+                                {suitabilityResult.critique && suitabilityResult.critique.length > 0 && (
+                                  <div className="border-t border-black/10 dark:border-white/10 pt-4 mt-2">
+                                    <div className="flex items-center gap-2 mb-3">
+                                      <ShieldAlert className="w-4 h-4 text-red-500" />
+                                      <span className="text-xs font-black uppercase tracking-widest text-red-500">Expert Audit (Red Team)</span>
+                                      {suitabilityResult.readinessScore !== undefined && (
+                                         <span className="ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded">
+                                           Ready: {suitabilityResult.readinessScore}%
+                                         </span>
+                                      )}
+                                    </div>
+                                    <div className="space-y-3">
+                                      {suitabilityResult.critique.map((item, i) => (
+                                        <div key={i} className="flex gap-2">
+                                          <div className={`w-1 shrink-0 rounded-full mt-1.5 h-1.5 ${
+                                            item.severity === 'high' ? 'bg-red-500' :
+                                            item.severity === 'medium' ? 'bg-orange-500' :
+                                            'bg-blue-50'
+                                          }`} />
+                                          <div>
+                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                               <span className="text-[9px] font-bold uppercase opacity-50">{item.category}</span>
+                                            </div>
+                                            <p className={`text-[10px] leading-relaxed ${isDarkMode ? 'text-white/70' : 'text-black/70'}`}>
+                                              {item.feedback}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
-                          
-                          {/* Custom AI Optimization Prompt */}
+                        </div>
+                      </div>
+
+      {/* Custom AI Optimization Prompt */}
                           <div className="mt-4">
                             <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDarkMode ? 'opacity-50' : 'opacity-70'}`}>Custom AI Optimization Prompt (Optional)</label>
                             <textarea 
@@ -3047,7 +3099,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                     <div className="flex items-center gap-2">
                                       <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Token Monitor</span>
                                       <button 
-                                        onClick={fetchTokenUsageManual}
+                                        onClick={fetchTokenUsage}
                                         disabled={isRefreshingTokens}
                                         className={`p-1 rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${isRefreshingTokens ? 'animate-spin opacity-50' : 'opacity-50 hover:opacity-100'}`}
                                         title="Refresh Token Usage"
@@ -3092,28 +3144,17 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 {(selectedEngine === 'openai' || selectedEngine === 'hybrid-openai') && (
                                   <div>
                                     {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">OpenAI</span>}
-                                    <div className="grid grid-cols-2 gap-4">
-                                      <div className="flex flex-col">
-                                        <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
-                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.input / 1000).toFixed(1)}k</span>
-                                      </div>
-                                      <div className="flex flex-col">
-                                        <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
-                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.output / 1000).toFixed(1)}k</span>
-                                      </div>
-                                    </div>
                                   </div>
                                 )}
                               </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </section>
                     </div>
-                  </section>
-                </div>
-              )}
-              {activeTab === 'profile' && (
+                  )}
+
+                  {activeTab === 'profile' && (
                 <div className="space-y-6">
                   <section className={`rounded-2xl border p-6 shadow-xl transition-colors ${isDarkMode ? 'bg-[#141414] border-white/10' : 'bg-white border-black/5'}`}>
                     <div className="flex items-center justify-between mb-6">
@@ -3257,6 +3298,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             <span>Drive connection expired or not found on this device. Please reconnect to sync your files.</span>
                           </div>
                         )}
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                          <div className="flex-1">
+                            <div className="font-bold text-xs sm:text-sm">Target Folder</div>
+                            <div className="text-[10px] sm:text-xs opacity-60">
+                              {selectedDriveFolder ? `Saving to: ${selectedDriveFolder.name}` : 'Saving to Root (Default)'}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setIsSelectingFolder(true)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-neutral-200 dark:bg-neutral-800 hover:bg-opacity-80 transition-all border border-black/5 dark:border-white/5"
+                          >
+                            {selectedDriveFolder ? 'Change Folder' : 'Select Folder'}
+                          </button>
+                        </div>
 
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                           <div className="flex-1">
@@ -3734,7 +3790,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                       <>
                                         <p className="text-xs font-medium truncate">{file.name}</p>
                                         <p className="text-[9px] opacity-40">
-                                          {new Date(file.modifiedTime).toLocaleString()} • {(file.size / 1024).toFixed(1)} KB
+                                          {new Date(file.modifiedTime).toLocaleString()}  {(file.size / 1024).toFixed(1)} KB
                                         </p>
                                       </>
                                     )}
@@ -4024,7 +4080,10 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
-                      <div className="space-y-2 md:space-y-4 group">
+                      <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="space-y-2 md:space-y-4 group text-center focus:outline-none"
+                      >
                         <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
                           <Upload className="w-6 h-6 md:w-8 md:h-8 text-emerald-500" />
                         </div>
@@ -4032,8 +4091,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <h4 className="font-bold text-[10px] md:text-sm uppercase tracking-widest">1. Input</h4>
                           <p className="text-[9px] md:text-xs opacity-40">Load your current experience</p>
                         </div>
-                      </div>
-                      <div className="space-y-2 md:space-y-4 group">
+                      </button>
+                      <button 
+                        onClick={() => {
+                          jdTextareaRef.current?.focus();
+                          jdTextareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }}
+                        className="space-y-2 md:space-y-4 group text-center focus:outline-none"
+                      >
                         <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:-rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
                           <Target className="w-6 h-6 md:w-8 md:h-8 text-blue-500" />
                         </div>
@@ -4041,8 +4106,11 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <h4 className="font-bold text-[10px] md:text-sm uppercase tracking-widest">2. Target</h4>
                           <p className="text-[9px] md:text-xs opacity-40">Define your dream role</p>
                         </div>
-                      </div>
-                      <div className="space-y-2 md:space-y-4 group">
+                      </button>
+                      <button 
+                        onClick={() => handleOptimize()}
+                        className="space-y-2 md:space-y-4 group text-center focus:outline-none"
+                      >
                         <div className={`w-12 h-12 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${isDarkMode ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-black/5'}`}>
                           <Zap className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
                         </div>
@@ -4050,7 +4118,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                           <h4 className="font-bold text-[10px] md:text-sm uppercase tracking-widest">3. Optimize</h4>
                           <p className="text-[9px] md:text-xs opacity-40">Get your ATS-ready resume</p>
                         </div>
-                      </div>
+                      </button>
                     </div>
 
                     <div className="pt-4 md:pt-8">
@@ -4266,7 +4334,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     </div>
                   </div>
                 </motion.div>
-              )}
+            )}
             </AnimatePresence>
           </div>
         </main>
@@ -4284,6 +4352,14 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <a href="#" className="text-[10px] font-bold opacity-40 hover:opacity-100 transition-opacity uppercase tracking-widest">Contact</a>
           </div>
         </div>
+        <AuthModal 
+          isOpen={isAuthModalOpen} 
+          onClose={() => setIsAuthModalOpen(false)} 
+          isDarkMode={isDarkMode}
+          onSuccess={() => {
+            setIsAuthModalOpen(false);
+          }}
+        />
       </footer>
     </div>
   );

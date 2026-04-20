@@ -54,8 +54,7 @@ export async function extractRelevantResumeData(resumeText: string, apiKey: stri
   const cached = getFromCache(partialKey);
   if (cached) return cached;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+  const genAI = new GoogleGenAI({ apiKey });
 
   const trimmedResume = trimInput(resumeText, 6000);
 
@@ -79,7 +78,9 @@ export async function extractRelevantResumeData(resumeText: string, apiKey: stri
         { "title": "Project Name", "description": "Description" }
       ],
       "education": ["Degree, School"],
-      "certifications": ["Cert Name"]
+      "certifications": [
+        { "name": "Cert Name", "issuer": "Issuing Body", "date": "Date" }
+      ]
     }
     STRICT RULE: Extract EVERY SINGLE role present in the resume. Do not skip any jobs, even very old ones.
     Extract up to 10 bullets per role if available to ensure the next stage has enough content.
@@ -89,18 +90,21 @@ export async function extractRelevantResumeData(resumeText: string, apiKey: stri
   `;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    const response = await genAI.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
+    });
+    const text = response.text || "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     
     if (parsed) {
-      const responseObj = { data: parsed, usage: response.usageMetadata };
+      const responseObj = { data: parsed, usage: (response as any).usageMetadata };
       saveToCache(partialKey, responseObj);
       return responseObj;
     }
-    return { data: parsed, usage: response.usageMetadata };
+    return { data: parsed, usage: (response as any).usageMetadata };
   } catch (error) {
     console.error("Error extracting resume data:", error);
     return { data: null, usage: null };
@@ -113,8 +117,7 @@ export async function extractJDKeywords(jobDescription: string, apiKey: string) 
   const cached = getFromCache(partialKey);
   if (cached) return cached;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+  const genAI = new GoogleGenAI({ apiKey });
 
   const trimmedJD = trimInput(jobDescription, 4000);
 
@@ -127,18 +130,21 @@ export async function extractJDKeywords(jobDescription: string, apiKey: string) 
   `;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    const response = await genAI.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
+    });
+    const text = response.text || "";
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     const keywords = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
     
     if (keywords && keywords.length > 0) {
-      const responseObj = { data: keywords, usage: response.usageMetadata };
+      const responseObj = { data: keywords, usage: (response as any).usageMetadata };
       saveToCache(partialKey, responseObj);
       return responseObj;
     }
-    return { data: keywords, usage: response.usageMetadata };
+    return { data: keywords, usage: (response as any).usageMetadata };
   } catch (error) {
     console.error("Error extracting JD keywords:", error);
     return { data: [], usage: null };

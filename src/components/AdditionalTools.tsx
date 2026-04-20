@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download } from 'lucide-react';
-import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob } from '../services/geminiService';
+import { Zap, Brain, History, Trash2, ChevronRight, ChevronDown, CheckCircle2, AlertCircle, FileText, Copy, Download, ShieldAlert } from 'lucide-react';
+import { EngineConfig, EngineType, analyzeSkillGap, generateInterviewQuestions, generateCoverLetter, generateRecruiterMessage, optimizeHeadline, generateWhyThisJob, analyzeResumeCritique } from '../services/geminiService';
 
 interface AdditionalToolsProps {
   resumeText: string;
@@ -455,6 +455,7 @@ export const AdditionalTools: React.FC<AdditionalToolsProps> = ({
           </div>
           <span className="text-[9px] opacity-70 text-left leading-tight">Response for recruiters</span>
         </button>
+
       </div>
 
       {error && (

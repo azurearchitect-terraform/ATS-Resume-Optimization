@@ -5,6 +5,7 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import crypto from "crypto";
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import dotenv from "dotenv";
 import { v4 as uuidv4 } from 'uuid';
 import { google } from "googleapis";
@@ -143,14 +144,14 @@ async function startServer() {
         client_email: credentials.client_email,
         private_key: credentials.private_key,
       },
-      scopes: ['https://www.googleapis.com/auth/drive.file'],
+      scopes: ['https://www.googleapis.com/auth/drive'],
     });
 
     return google.drive({ version: 'v3', auth });
   };
 
   app.post("/api/save-to-drive", async (req, res) => {
-    const { pdfData, fileName, versioningEnabled, accessToken } = req.body;
+    const { pdfData, fileName, versioningEnabled, accessToken, parentFolderId } = req.body;
     
     if (!pdfData || !fileName) {
       return res.status(400).json({ error: "PDF data and file name are required" });
@@ -161,7 +162,7 @@ async function startServer() {
 
     try {
       const drive = getDriveClient(accessToken);
-      const folderId = process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
+      const folderId = parentFolderId || process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID;
       
       // Determine mimeType from fileName
       const mimeType = fileName.endsWith('.csv') ? 'text/csv' : 'application/pdf';
@@ -250,6 +251,34 @@ async function startServer() {
       }
 
       res.status(error.response?.status || 500).json({ error: errorMessage });
+    }
+  });
+
+  app.get("/api/list-drive-folders", async (req, res) => {
+    const accessToken = req.query.accessToken as string | undefined;
+    try {
+      const drive = getDriveClient(accessToken);
+      
+      const response = await drive.files.list({
+        // List folders that are not trashed
+        q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        pageSize: 1000,
+        fields: 'files(id, name, modifiedTime)',
+        spaces: 'drive',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      });
+
+      res.json({ 
+        success: true, 
+        folders: response.data.files || [] 
+      });
+    } catch (error: any) {
+      console.error("Drive Folder List Error:", error.message || error);
+      res.status(error.response?.status || 500).json({ 
+        success: false, 
+        error: error.message || "Failed to fetch Drive folders"
+      });
     }
   });
 
@@ -723,7 +752,9 @@ async function startServer() {
           "experience": [ { "role": "string", "company": "string", "duration": "string", "bullets": ["string"] } ],
           "projects": [ { "title": "string", "description": "string" } ],
           "education": ["string"],
-          "certifications": ["string"],
+          "certifications": [
+            { "name": "string", "issuer": "string", "date": "string" }
+          ],
           "ats_keywords_from_jd": ["string"],
           "ats_keywords_added_to_resume": ["string"],
           "keyword_gap": ["string"],
@@ -737,7 +768,7 @@ async function startServer() {
       `;
 
       let result;
-      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
+      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o-mini" : "gemini-3.1-pro-preview";
 
       if (pipelineType === 'hybrid-openai') {
         // OPENAI BRANCH
@@ -800,20 +831,17 @@ async function startServer() {
         // GEMINI BRANCH
         try {
         console.log(`[Pipeline] Step 3: Gemini Generation (${usedModel})...`);
-        const genAI = new GoogleGenAI(geminiKey);
-        const model = genAI.getGenerativeModel({ 
-          model: usedModel,
-        });
+        const genAI = new GoogleGenAI({ apiKey: geminiKey });
 
-        const genResult = await model.generateContent({
+        const genResult = await genAI.models.generateContent({
+          model: usedModel,
           contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-          generationConfig: { responseMimeType: "application/json" }
+          config: { responseMimeType: "application/json" }
         });
-        const response = genResult.response;
-        const text = response.text();
+        const text = genResult.text || "";
         
-        const genInput = response.usageMetadata?.promptTokenCount || 0;
-        const genOutput = response.usageMetadata?.candidatesTokenCount || 0;
+        const genInput = genResult.usageMetadata?.promptTokenCount || 0;
+        const genOutput = genResult.usageMetadata?.candidatesTokenCount || 0;
 
         // Log Gemini Pro usage
         logUsage({
@@ -821,7 +849,7 @@ async function startServer() {
           model: usedModel,
           inputTokens: genInput,
           outputTokens: genOutput,
-          totalTokens: response.usageMetadata?.totalTokenCount || 0,
+          totalTokens: genResult.usageMetadata?.totalTokenCount || 0,
           cacheHit: false,
           endpoint: "/api/v2/optimize",
           timestamp: Date.now(),
@@ -848,7 +876,7 @@ async function startServer() {
           usage: {
             promptTokenCount: genInput,
             candidatesTokenCount: genOutput,
-            totalTokenCount: response.usageMetadata?.totalTokenCount || 0
+            totalTokenCount: genResult.usageMetadata?.totalTokenCount || 0
           },
           geminiUsage,
           intermediateData: {
@@ -866,21 +894,20 @@ async function startServer() {
         
         // FALLBACK: Gemini 2.0 Flash
         const fallbackModelName = "gemini-2.0-flash";
-        const genAI = new GoogleGenAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: fallbackModelName });
+        const genAI = new GoogleGenAI({ apiKey: geminiKey });
         
-        const fallbackResult = await model.generateContent({
+        const fallbackResult = await genAI.models.generateContent({
+          model: fallbackModelName,
           contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-          generationConfig: { responseMimeType: "application/json" }
+          config: { responseMimeType: "application/json" }
         });
-        const fallbackResponse = fallbackResult.response;
-        const text = fallbackResponse.text();
+        const text = fallbackResult.text || "";
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         
         if (!jsonMatch) throw new Error("Fallback Gemini failed to return valid JSON");
 
-        const fallbackInput = fallbackResponse.usageMetadata?.promptTokenCount || 0;
-        const fallbackOutput = fallbackResponse.usageMetadata?.candidatesTokenCount || 0;
+        const fallbackInput = fallbackResult.usageMetadata?.promptTokenCount || 0;
+        const fallbackOutput = fallbackResult.usageMetadata?.candidatesTokenCount || 0;
 
         // Log Fallback usage
         logUsage({
@@ -888,7 +915,7 @@ async function startServer() {
           model: fallbackModelName,
           inputTokens: fallbackInput,
           outputTokens: fallbackOutput,
-          totalTokens: fallbackResponse.usageMetadata?.totalTokenCount || 0,
+          totalTokens: fallbackResult.usageMetadata?.totalTokenCount || 0,
           cacheHit: false,
           endpoint: "/api/v2/optimize",
           timestamp: Date.now(),
@@ -913,9 +940,9 @@ async function startServer() {
         result = {
           result: jsonMatch[0],
           usage: {
-            promptTokenCount: fallbackResponse.usageMetadata?.promptTokenCount || 0, 
-            candidatesTokenCount: fallbackResponse.usageMetadata?.candidatesTokenCount || 0,
-            totalTokenCount: fallbackResponse.usageMetadata?.totalTokenCount || 0
+            promptTokenCount: fallbackResult.usageMetadata?.promptTokenCount || 0, 
+            candidatesTokenCount: fallbackResult.usageMetadata?.candidatesTokenCount || 0,
+            totalTokenCount: fallbackResult.usageMetadata?.totalTokenCount || 0
           },
           geminiUsage,
           intermediateData: {
@@ -987,7 +1014,6 @@ async function startServer() {
       const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
       
       browser = await puppeteer.launch({
-        executablePath: executablePath || undefined,
         headless: true,
         args: [
           "--no-sandbox",

@@ -1,3 +1,9 @@
+export interface Certification {
+  name: string;
+  issuer: string;
+  date: string;
+}
+
 export interface ResumeData {
   personal_info: {
     name: string;
@@ -18,7 +24,7 @@ export interface ResumeData {
   };
   education: (Education | string)[];
   projects?: (Project | string)[];
-  certifications?: string[];
+  certifications?: (Certification | string)[];
 }
 
 export interface Experience {
@@ -82,6 +88,12 @@ export interface SuitabilityResult {
   dealbreakers: string[];
   strengths: string[];
   reasoning: string;
+  critique?: {
+    category: string;
+    feedback: string;
+    severity: 'low' | 'medium' | 'high';
+  }[];
+  readinessScore?: number;
 }
 
 export enum OperationType {

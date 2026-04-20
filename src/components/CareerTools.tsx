@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Brain, Target, ArrowRightLeft, HelpCircle, Code, Briefcase, ChevronRight, MessageSquare, FileInput } from 'lucide-react';
+import { Brain, Target, ArrowRightLeft, HelpCircle, Code, Briefcase, ChevronRight, MessageSquare, FileInput, IndianRupee } from 'lucide-react';
 import { JobTracker } from './JobTracker';
 import { CareerQuiz } from './CareerQuiz';
 import { ATSAutofillHelper } from './ATSAutofillHelper';
@@ -19,36 +19,12 @@ export const CareerTools: React.FC<CareerToolsProps> = ({ isDarkMode, engineConf
 
   const tools = [
     {
-      id: 'personality',
-      title: 'Career Personality Test',
-      description: 'Identify your professional strengths, weaknesses, and the environments in which you thrive.',
-      icon: Brain,
-      color: 'text-purple-500',
-      bgColor: 'bg-purple-500/10'
-    },
-    {
-      id: 'goals',
-      title: 'Career Goal Tracker',
-      description: 'Define your goals, track your progress and reach your goals faster.',
-      icon: Target,
-      color: 'text-blue-500',
-      bgColor: 'bg-blue-500/10'
-    },
-    {
       id: 'stay_quit',
       title: 'Stay vs Quit Job Quiz',
       description: 'Take stock of your current work situation and decide if you should stay or leave.',
       icon: ArrowRightLeft,
       color: 'text-orange-500',
       bgColor: 'bg-orange-500/10'
-    },
-    {
-      id: 'change',
-      title: 'Career Change Quiz',
-      description: 'Evaluate your skills, interests, and professional goals to find careers that match.',
-      icon: HelpCircle,
-      color: 'text-emerald-500',
-      bgColor: 'bg-emerald-500/10'
     },
     {
       id: 'tech',
@@ -73,6 +49,22 @@ export const CareerTools: React.FC<CareerToolsProps> = ({ isDarkMode, engineConf
       icon: FileInput,
       color: 'text-rose-500',
       bgColor: 'bg-rose-500/10'
+    },
+    {
+      id: 'interview_coach',
+      title: 'AI Interview Coach',
+      description: 'Interactive one-on-one mock interview simulator. Practice common and role-specific questions with real-time feedback.',
+      icon: MessageSquare,
+      color: 'text-emerald-500',
+      bgColor: 'bg-emerald-500/10'
+    },
+    {
+      id: 'negotiation',
+      title: 'Salary & Negotiation Prep',
+      description: 'Learn research-backed negotiation strategies and practice your pitch for higher compensation.',
+      icon: IndianRupee,
+      color: 'text-amber-500',
+      bgColor: 'bg-amber-500/10'
     }
   ];
 
