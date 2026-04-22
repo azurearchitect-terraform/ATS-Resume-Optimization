@@ -305,17 +305,14 @@ async function startServer() {
         files: response.data.files || [] 
       });
     } catch (error: any) {
-      let errorMessage = error.message || "Failed to fetch Drive files";
+      console.error("Drive List Error:", error.message || error);
+      if (error.response && error.response.data) {
+        console.error("Drive List Error Details:", JSON.stringify(error.response.data));
+      }
       
+      let errorMessage = error.message || "Failed to fetch Drive files";
       if (error.code === 401 || (error.response && error.response.status === 401)) {
         errorMessage = "AUTH_EXPIRED: Your Google Drive session has expired. Please reconnect your Drive in settings.";
-        // Avoid spamming logs for standard expiration
-        console.warn("Drive authentication expired.");
-      } else {
-        console.error("Drive List Error:", error.message || error);
-        if (error.response && error.response.data) {
-          console.error("Drive List Error Details:", JSON.stringify(error.response.data));
-        }
       }
 
       res.status(error.response?.status || 500).json({ 

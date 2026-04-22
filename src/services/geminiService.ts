@@ -377,6 +377,7 @@ ${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejec
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 
 STRICT RULES:
+- HALLUCINATION PREVENTION: DO NOT invent, fabricate, or add any projects, experience, employers, or skills that are not explicitly present in the original resume text. Only refine and enhance existing content.
 - PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
 - INCLUDE ALL ROLES: Do not skip older roles. Include every role present in the input.
 - MAX 2 PAGES: Content must fit A4 layout (794x1123px).

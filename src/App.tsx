@@ -139,22 +139,42 @@ export default function App() {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
 
-  // Protect against accidental tab close
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const isInitialLoad = useRef(true);
+
+  const [resumeText, setResumeText] = useState(() => {
+    const saved = localStorage.getItem('resumeText');
+    if (saved) return saved;
+    return "";
+  });
+
   useEffect(() => {
-    // Clean up URL parameters if they exist (like ?origin=...)
+    if (isInitialLoad.current) return;
+    if (user) setHasUnsavedChanges(true);
+  }, [resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken, user]);
+  const [jobDescription, setJobDescription] = useState('');
+  const [activeTab, setActiveTab] = useState<'build' | 'style' | 'assets' | 'profile' | 'tools'>('build');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [targetRole, setTargetRole] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [mode, setMode] = useState<OptimizationMode>('balanced');
+  const [fastMode, setFastMode] = useState(false);
+  const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
+  const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
+  const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
+  const audienceDropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const jdTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clean up URL parameters if they exist (like ?origin=...)
+  useEffect(() => {
     if (window.location.search) {
       const url = new URL(window.location.href);
       url.search = '';
       window.history.replaceState({}, '', url.toString());
     }
-
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = 'Are you sure you want to leave? Your changes may not be synced.';
-      return e.returnValue;
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   useEffect(() => {
@@ -236,6 +256,11 @@ export default function App() {
         setIsDriveConnected(false);
       }
       setIsAuthReady(true);
+      // Allow state to settle before tracking changes
+      setTimeout(() => {
+        isInitialLoad.current = false;
+        setHasUnsavedChanges(false);
+      }, 500);
     });
     return () => unsubscribe();
   }, []);
@@ -364,6 +389,7 @@ export default function App() {
         // Save token to Firestore for cross-device autoconnect
         if (user) {
           await setDoc(doc(db, 'users', user.uid), {
+            userId: user.uid,
             driveAccessToken: credential.accessToken,
             settings: { isDriveConnected: true }
           }, { merge: true });
@@ -424,53 +450,67 @@ export default function App() {
   };
 
   // Sync all user data to Firestore
-  const syncAllData = async () => {
+  const syncAllData = async (silent = false) => {
     if (!user) return;
+    setIsSyncing(true);
     try {
       const docRef = doc(db, 'users', user.uid);
-      const dataToSync = {
-        masterResume: resumeText,
-        customPrompt: customPrompt,
+      const dataToSync: any = {
+        userId: user.uid,
+        masterResume: resumeText || "",
+        customPrompt: customPrompt || "",
         settings: {
-          isDriveConnected,
           versioningEnabled,
           isAutosaveEnabled,
-          selectedDriveFolder
+          isDriveConnected: !!driveAccessToken || isDriveConnected
         },
-        driveAccessToken,
         updatedAt: serverTimestamp()
       };
       
+      if (typeof selectedDriveFolder !== 'undefined' && selectedDriveFolder !== null) {
+        dataToSync.settings.selectedDriveFolder = selectedDriveFolder;
+      }
+      if (driveAccessToken) {
+        dataToSync.driveAccessToken = driveAccessToken;
+      }
+      
       // Use setDoc for standard sync
       await setDoc(docRef, dataToSync, { merge: true });
-      showToast('All data synced successfully', 'success');
+      setHasUnsavedChanges(false);
+      if (!silent) showToast('All data synced successfully', 'success');
     } catch (err) {
       console.error("Sync Error:", err);
-      showToast('Failed to sync data', 'error');
+      if (!silent) showToast('Failed to sync data', 'error');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
-  // Dedicated sync for browser closure
-  const syncOnClose = () => {
+  // Sync on exit / tab close
+  useEffect(() => {
     if (!user) return;
-    const docRef = doc(db, 'users', user.uid);
-    const dataToSync = {
-        masterResume: resumeText,
-        customPrompt: customPrompt,
-        settings: {
-          isDriveConnected,
-          versioningEnabled,
-          isAutosaveEnabled
-        },
-        driveAccessToken,
-        updatedAt: new Date() // Use client Date for beacon
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && hasUnsavedChanges) {
+        // Send a quick synchronous-like beacon sync (Firestore will persist to IndexedDB and sync in background if possible)
+        syncAllData(true);
+      }
     };
     
-    // Beacon cannot send complex Firestore objects, so we would normally 
-    // need an API endpoint. Since we are client-only in this app, 
-    // we must rely on the user clicking logout or staying on the page.
-    // We will stick to the 'beforeunload' warning as the primary safety net.
-  };
+    // Also use beforeunload to trigger it
+    const handleBeforeUnload = () => {
+      if (hasUnsavedChanges) {
+        syncAllData(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user, hasUnsavedChanges, resumeText, customPrompt, isDriveConnected, versioningEnabled, isAutosaveEnabled, selectedDriveFolder, driveAccessToken]);
 
   const handleLogout = async () => {
     try {
@@ -550,6 +590,7 @@ export default function App() {
         setConfirmDialog(null);
         try {
           await setDoc(doc(db, 'users', user.uid), {
+            userId: user.uid,
             encryptedApiKey: "",
             updatedAt: serverTimestamp()
           }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'users/' + user.uid));
@@ -566,27 +607,6 @@ export default function App() {
       onCancel: () => setConfirmDialog(null)
     });
   };
-
-  const [resumeText, setResumeText] = useState(() => {
-    const saved = localStorage.getItem('resumeText');
-    if (saved) return saved;
-    
-    return "";
-  });
-  const [jobDescription, setJobDescription] = useState('');
-  const [activeTab, setActiveTab] = useState<'build' | 'style' | 'assets' | 'profile' | 'tools'>('build');
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [targetRole, setTargetRole] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [mode, setMode] = useState<OptimizationMode>('balanced');
-  const [fastMode, setFastMode] = useState(false);
-  const [recruiterSimulationMode, setRecruiterSimulationMode] = useState(false);
-  const [selectedAudiences, setSelectedAudiences] = useState<string[]>(['microsoft']);
-  const [isAudienceDropdownOpen, setIsAudienceDropdownOpen] = useState(false);
-  const audienceDropdownRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const jdTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -2353,41 +2373,30 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
     return <AdminDashboard onBack={() => setShowAdminDashboard(false)} isDarkMode={isDarkMode} />;
   }
 
-  if (isAuthReady && !user) {
-    return (
-      <ProfessionalWelcomePage 
-        onLogin={handleLogin} 
-        onEmailLogin={handleEmailLogin}
-        onEmailSignUp={handleEmailSignUp}
-        onPasswordReset={handlePasswordReset}
-      />
-    );
-  }
-
   return (
     <div className={`h-screen flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-neutral-950 text-white' : 'bg-neutral-50 text-neutral-900'} font-sans selection:bg-emerald-500/30`}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <DriveFolderPicker 
-        isOpen={isSelectingFolder}
-        onClose={() => setIsSelectingFolder(false)}
-        onSelect={(folder) => {
-          setSelectedDriveFolder(folder);
-          setIsSelectingFolder(false);
-          showToast(`Target folder set to: ${folder.name}`, 'success');
-        }}
-        accessToken={driveAccessToken}
-        isDarkMode={isDarkMode}
-      />
-      {confirmDialog && (
-        <ConfirmDialog 
-          message={confirmDialog.message} 
-          onConfirm={confirmDialog.onConfirm} 
-          onCancel={confirmDialog.onCancel} 
-          isDarkMode={isDarkMode} 
+          isOpen={isSelectingFolder}
+          onClose={() => setIsSelectingFolder(false)}
+          onSelect={(folder) => {
+            setSelectedDriveFolder(folder);
+            setIsSelectingFolder(false);
+            showToast(`Target folder set to: ${folder.name}`, 'success');
+          }}
+          accessToken={driveAccessToken}
+          isDarkMode={isDarkMode}
         />
-      )}
-      {/* Header */}
-      <header className={`shrink-0 border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-neutral-950/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
+        {confirmDialog && (
+          <ConfirmDialog 
+            message={confirmDialog.message} 
+            onConfirm={confirmDialog.onConfirm} 
+            onCancel={confirmDialog.onCancel} 
+            isDarkMode={isDarkMode} 
+          />
+        )}
+        {/* Header */}
+        <header className={`shrink-0 border-b sticky top-0 z-50 transition-colors w-full ${isDarkMode ? 'bg-neutral-950/80 backdrop-blur-md border-white/10' : 'bg-white/80 backdrop-blur-md border-black/5'}`}>
         <div className="max-w-[1600px] mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isDarkMode ? 'bg-emerald-500' : 'bg-black'}`}>
@@ -2396,6 +2405,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             <span className="font-bold text-xl tracking-tight">ATS.OPTIMIZER</span>
           </div>
           <div className="flex items-center gap-4">
+            {user && (
+              <button 
+                onClick={() => syncAllData(false)}
+                className={`p-2 rounded-full transition-colors relative ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${hasUnsavedChanges ? 'bg-amber-500/10' : ''}`}
+                title="Sync to Cloud"
+              >
+                <Cloud className={`w-5 h-5 transition-colors ${isSyncing ? 'animate-pulse text-blue-500' : hasUnsavedChanges ? 'text-amber-500' : ''}`} />
+                {hasUnsavedChanges && !isSyncing && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500"></span>
+                )}
+              </button>
+            )}
             <button 
               onClick={() => setIsFocusMode(!isFocusMode)}
               className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-emerald-400' : 'hover:bg-black/5 text-emerald-600'} ${isFocusMode ? 'bg-emerald-500/20' : ''}`}
@@ -3267,6 +3288,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 setIsApiKeySaved(false);
                                 // Also update Firestore
                                 await setDoc(doc(db, 'users', user.uid), {
+                                  userId: user.uid,
                                   encryptedApiKey: ''
                                 }, { merge: true });
                                 showToast("API keys cleared.", "success");
@@ -3998,7 +4020,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                     />
                     <div className="mt-8">
                       <AdditionalTools 
-                        resumeText={getEffectiveResumeText ? getEffectiveResumeText() : resumeText}
+                        resumeText={getEffectiveResumeText()}
                         jobDescription={jobDescription}
                         targetRole={targetRole}
                         companyName={companyName}
