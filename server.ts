@@ -102,6 +102,16 @@ async function startServer() {
   app.use(bodyParser.json({ limit: '50mb' }));
   app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
+  // Debug: Log all incoming requests
+  app.use((req, res, next) => {
+    console.log(`[Server] ${req.method} ${req.url}`);
+    next();
+  });
+
+  app.get("/api/health-check", (req, res) => {
+    res.json({ status: "alive", timestamp: new Date().toISOString() });
+  });
+
   console.log("Environment Variables Check:");
   console.log("PUPPETEER_EXECUTABLE_PATH:", process.env.PUPPETEER_EXECUTABLE_PATH);
   console.log("HTTP_PROXY:", process.env.HTTP_PROXY);
