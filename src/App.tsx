@@ -772,7 +772,7 @@ export default function App() {
   
   const [engineConfig, setEngineConfig] = useState<Record<string, any>>({
     gemini: { model: 'gemini-3.1-pro-preview', apiKey: '' },
-    openai: { model: 'gpt-4o-mini', apiKey: '' },
+    openai: { model: 'gpt-4o', apiKey: '' },
     production: { model: 'auto', apiKey: '' }
   });
   const [selectedEngine, setSelectedEngine] = useState<'gemini' | 'openai' | 'hybrid-gemini' | 'hybrid-openai'>('gemini');
@@ -1190,8 +1190,14 @@ export default function App() {
         // On mobile, fit width but don't go too small
         newZoom = Math.max(0.4, Math.min(scaleX, 1.0));
       } else {
-        // On desktop/laptop, fit both dimensions to ensure it's fully visible in the pane
-        newZoom = Math.max(0.2, Math.min(scaleX, scaleY, 1.1));
+        // On desktop/laptop, prioritize width fitting but allow some vertical fitting
+        // Increase minimum zoom to 60% (0.6) to avoid the "zoom only 20%" issue
+        newZoom = Math.max(0.6, Math.min(scaleX, 1.1));
+        
+        // If it's still way too tall for the screen, we can slightly nudge it but not to 20%
+        if (scaleY < newZoom) {
+          newZoom = Math.max(0.6, Math.min(newZoom, scaleY * 1.5));
+        }
       }
       
       if (Math.abs(newZoom - currentZoom) > 0.01) {
@@ -1395,7 +1401,7 @@ export default function App() {
         finalJobDescription = await fetchJobDescription(jobUrl, getRouterConfig());
       }
 
-      const result = await evaluateSuitability(resumeText, finalJobDescription, getRouterConfig());
+      const result = await evaluateSuitability(resumeText, finalJobDescription, getRouterConfig(), fastMode);
       setSuitabilityResult(result);
     } catch (err: any) {
       console.error("Suitability check failed:", err);
@@ -1450,7 +1456,7 @@ export default function App() {
       setError(null);
       
       try {
-        const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig());
+        const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
         if (bestAudiences && bestAudiences.length > 0) {
           setSelectedAudiences(bestAudiences);
           currentAudiences = bestAudiences;
@@ -1489,10 +1495,10 @@ export default function App() {
     }, 200);
     
     const engineNameMap: Record<string, string> = {
-      'gemini': 'GEMINI',
-      'openai': 'OPENAI',
-      'hybrid-gemini': 'Hybrid (Gemini 3.1 Pro)',
-      'hybrid-openai': 'Hybrid (OpenAI GPT-5.4 Nano)'
+      'gemini': 'Google Gemini 2.0',
+      'openai': 'OpenAI GPT-4o',
+      'hybrid-gemini': 'Hybrid Strategy (Gemini + Flash)',
+      'hybrid-openai': 'Hybrid Premium (OpenAI + Gemini Flash)'
     };
     const engineName = engineNameMap[selectedEngine as keyof typeof engineNameMap] || selectedEngine.toUpperCase();
     setOptimizationStatus(`Initializing ${engineName}...`);
@@ -1512,6 +1518,19 @@ export default function App() {
       // Run all audience optimizations in parallel
       const optimizationPromises = currentAudiences.map(async (audienceId) => {
         const audienceLabel = AUDIENCES.find(a => a.id === audienceId)?.label || audienceId;
+        
+        // Progress reporting for hybrid mode
+        if (selectedEngine.includes('hybrid')) {
+          setOptimizationStatus(`Step 1: Extracting Keywords with Gemini...`);
+          setTimeout(() => {
+            if (isOptimizing) setOptimizationStatus(`Step 2: Internal Logic & Content Trimming...`);
+          }, 3000);
+          setTimeout(() => {
+            if (isOptimizing) setOptimizationStatus(`Step 3: Final Synthesis with ${selectedEngine.includes('openai') ? 'OpenAI' : 'Gemini 3.1 Pro'}...`);
+          }, 6000);
+        } else {
+          setOptimizationStatus(`Optimizing for ${audienceLabel}...`);
+        }
         
         const data = await optimizeResume(
           finalResumeText, 
@@ -1583,7 +1602,7 @@ export default function App() {
             [audienceId]: { 
               ...data, 
               _engine: selectedEngine, 
-              _model: engineConfig[selectedEngine].model 
+              _model: engineConfig[selectedEngine]?.model || (selectedEngine.includes('openai') ? engineConfig.openai.model : engineConfig.gemini.model)
             } as any
           };
           
@@ -2227,19 +2246,19 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
             </h2>
             <div className="grid grid-cols-1 gap-1">
               {(results[activeAudience!]?.certifications || data.certifications || []).map((cert: any, i) => (
-                <div key={i} className="resume-bullet-item flex justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="resume-bullet-dot" />
+                <div key={i} className="resume-bullet-item">
+                  <div className="resume-bullet-dot" />
+                  <div className="flex-1 flex justify-between items-baseline min-w-0">
                     <span className="resume-bullet-text opacity-90 font-medium">
                       {typeof cert === 'string' ? cert : cert.name}
                     </span>
+                    {typeof cert !== 'string' && (
+                      <div className="text-[10px] opacity-60 flex gap-2 italic ml-4 shrink-0">
+                        <span>{cert.issuer}</span>
+                        <span>{cert.date}</span>
+                      </div>
+                    )}
                   </div>
-                  {typeof cert !== 'string' && (
-                    <div className="text-[10px] opacity-60 flex gap-2 italic">
-                      <span>{cert.issuer}</span>
-                      <span>{cert.date}</span>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -2479,7 +2498,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               : (isDarkMode ? 'text-white/40 hover:text-white' : 'text-black/60 hover:text-black')
                           }`}
                         >
-                          {tab === 'assets' ? 'Assets' : tab}
+                          {tab}
                         </button>
                       ))}
                     </div>
@@ -2703,7 +2722,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               }
                               try {
                                 setIsOptimizing(true); // Reuse optimizing state for loading indicator
-                                const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig());
+                                const bestAudiences = await analyzeBestAudiences(jobDescription || jobUrl || "", targetRole || "Professional Candidate", getRouterConfig(), fastMode);
                                 console.log('Best audiences found:', bestAudiences);
                                 if (bestAudiences && bestAudiences.length > 0) {
                                   setSelectedAudiences(bestAudiences);
@@ -2820,12 +2839,12 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                             </div>
                             {selectedEngine === 'hybrid-gemini' && (
                               <p className="mt-3 text-[10px] opacity-50 italic leading-relaxed">
-                                Hybrid Gemini uses Gemini Flash for extraction and Gemini 3.1 Pro for high-reasoning creative rewriting. (Native & Efficient)
+                                <span className="text-emerald-500 font-bold">Recommended:</span> Hybrid Gemini uses Lightweight Flash for deep analysis and Gemini 3.1 Pro for the final rewrite. Best for speed and cost-efficiency.
                               </p>
                             )}
                             {selectedEngine === 'hybrid-openai' && (
                               <p className="mt-3 text-[10px] opacity-50 italic leading-relaxed">
-                                Hybrid OpenAI uses Gemini Flash for extraction and OpenAI GPT-4o for creative synthesis. (Premium Hybrid)
+                                <span className="text-blue-500 font-bold">Premium:</span> Uses Gemini Flash for initial analysis + OpenAI GPT-4o for high-end synthesis and tone optimization. (Azure OpenAI Compatible)
                               </p>
                             )}
                           </div>
@@ -2847,18 +2866,21 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                  >
                                    {selectedEngine === 'gemini' && (
                                      <>
-                                       <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Deep Thinking)</option>
-                                        <option value="gemini-2.0-flash-thinking-exp-01-21">Gemini Thinking (Experimental)</option>
-                                       <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</option>
-                                       <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                                       <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                                       <option value="gemini-flash-latest">Gemini 2.0 Flash (Balanced)</option>
+                                       <option value="gemini-3-flash-preview">Gemini 3 Flash (Fastest)</option>
                                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</option>
+                                       <option value="gemini-3.1-pro-preview:thinking">Gemini 3.1 Pro (Deep Thinking)</option>
+                                       <option value="gemini-2.0-flash-thinking-exp-01-21">Gemini Thinking (Experimental)</option>
                                      </>
                                    )}
                                    {selectedEngine === 'openai' && (
                                      <>
-                                       <option value="gpt-4o-mini">GPT-4o Mini (Latest & Fast)</option>
-                                        <option value="gpt-4o">GPT-4o (Premium)</option>
-                                                                                                                                                          </>
+                                       <option value="gpt-4o">GPT-4o (Premium & Capable)</option>
+                                       <option value="gpt-4o-mini">GPT-4o Mini (Speed Optimized)</option>
+                                       <option value="o1">OpenAI o1 (Full Thinking)</option>
+                                       <option value="o3-mini">OpenAI o3-mini (Thinking Lite)</option>
+                                     </>
                                    )}
                                  </select>
                                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
@@ -2885,21 +2907,6 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                         </div>
                       </div>
                     </div>
-
-                      <LinkedInImporter 
-                        linkedInUrl={linkedInUrl}
-                        setLinkedInUrl={setLinkedInUrl}
-                        linkedInFileName={linkedInFileName}
-                        setLinkedInFileName={setLinkedInFileName}
-                        setLinkedInPdfText={setLinkedInPdfText}
-                        linkedInPdfText={linkedInPdfText}
-                        isDarkMode={isDarkMode}
-                        isExtracting={isExtractingLinkedIn}
-                        setIsExtracting={setIsExtractingLinkedIn}
-                        onImport={(text) => {
-                          showToast("LinkedIn data loaded successfully!", "success");
-                        }}
-                      />
 
                       {/* Job Description */}
                       <div>
@@ -3166,7 +3173,7 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                               <div className="space-y-3">
                                 {(selectedEngine === 'gemini' || selectedEngine.startsWith('hybrid')) && (
                                   <div className={selectedEngine.startsWith('hybrid') ? 'pb-2 border-b border-black/5 dark:border-white/5' : ''}>
-                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">Gemini</span>}
+                                    {selectedEngine.startsWith('hybrid') && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 block mb-1">Stage 1: Gemini Analysis</span>}
                                     <div className="grid grid-cols-2 gap-4">
                                       <div className="flex flex-col">
                                         <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
@@ -3181,8 +3188,18 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                                 )}
                                 
                                 {(selectedEngine === 'openai' || selectedEngine === 'hybrid-openai') && (
-                                  <div>
-                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest opacity-40 block mb-1">OpenAI</span>}
+                                  <div className="pt-2">
+                                    {selectedEngine === 'hybrid-openai' && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 block mb-1">Stage 3: OpenAI Generation</span>}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Input Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.input / 1000).toFixed(1)}k</span>
+                                      </div>
+                                      <div className="flex flex-col">
+                                        <span className="text-[9px] uppercase opacity-40 font-bold">Output Tokens</span>
+                                        <span className="text-xs font-mono font-bold">{(tokenUsage.openai.output / 1000).toFixed(1)}k</span>
+                                      </div>
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -4011,6 +4028,24 @@ ${(res.education || [] as any[]).map(edu => typeof edu === 'string' ? edu : `${e
                       </h2>
                       <p className="text-sm opacity-70 mt-1">Enhance your application with AI-powered coaching, interview prep, and networking features.</p>
                     </div>
+
+                    <div className="mb-8">
+                      <LinkedInImporter 
+                        linkedInUrl={linkedInUrl}
+                        setLinkedInUrl={setLinkedInUrl}
+                        linkedInFileName={linkedInFileName}
+                        setLinkedInFileName={setLinkedInFileName}
+                        setLinkedInPdfText={setLinkedInPdfText}
+                        linkedInPdfText={linkedInPdfText}
+                        isDarkMode={isDarkMode}
+                        isExtracting={isExtractingLinkedIn}
+                        setIsExtracting={setIsExtractingLinkedIn}
+                        onImport={(text) => {
+                          showToast("LinkedIn data loaded successfully!", "success");
+                        }}
+                      />
+                    </div>
+
                     <CareerTools 
                       isDarkMode={isDarkMode} 
                       engineConfig={engineConfig} 

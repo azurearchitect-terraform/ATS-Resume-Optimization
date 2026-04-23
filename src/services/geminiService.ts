@@ -134,27 +134,54 @@ async function callAI(prompt: string, model: string, engine: EngineType, encrypt
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // Configure thinking level based on model instructions or user preferences
-      // Note: gemini-3 series models support thinkingLevel
-      const isThinkingModel = model.includes('thinking') || model.includes('pro');
+      // Thinking mode logic
+      const isThinkingModel = model.includes('thinking') || model.includes(':thinking');
+      const cleanModel = (model || "gemini-3.1-pro-preview").replace(':thinking', '');
       
-      const response = await ai.models.generateContent({ 
-        model: model || "gemini-3.1-pro-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
-          thinkingConfig: isThinkingModel ? { thinkingLevel: ThinkingLevel.HIGH } : undefined
-        }
-      });
-
-      return {
-        result: response.text || "",
-        usage: {
-          promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
-          candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
-          totalTokenCount: response.usageMetadata?.totalTokenCount || 0
-        }
+      const config = {
+        responseMimeType: prompt.toLowerCase().includes('json') ? "application/json" : "text/plain",
+        thinkingConfig: isThinkingModel ? { thinkingLevel: ThinkingLevel.HIGH } : undefined
       };
+
+      try {
+        const response = await ai.models.generateContent({ 
+          model: cleanModel,
+          contents: prompt,
+          config
+        });
+
+        return {
+          result: response.text || "",
+          usage: {
+            promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
+            candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
+            totalTokenCount: response.usageMetadata?.totalTokenCount || 0
+          }
+        };
+      } catch (innerError: any) {
+        const errorMsg = innerError?.message?.toLowerCase() || "";
+        const isQuotaError = errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("limit") || errorMsg.includes("exhausted");
+        
+        // Quota Fallback: If 3.1 Pro/Flash etc hits quota, try Gemini 2.0 Flash
+        if (isQuotaError && cleanModel !== "gemini-2.0-flash") {
+          console.warn(`[Gemini Service] Quota reached for ${cleanModel}. Falling back to gemini-2.0-flash...`);
+          const response = await ai.models.generateContent({ 
+            model: "gemini-2.0-flash",
+            contents: prompt,
+            config: { ...config, thinkingConfig: undefined } // Disable thinking for fallback
+          });
+
+          return {
+            result: response.text || "",
+            usage: {
+              promptTokenCount: response.usageMetadata?.promptTokenCount || 0,
+              candidatesTokenCount: response.usageMetadata?.candidatesTokenCount || 0,
+              totalTokenCount: response.usageMetadata?.totalTokenCount || 0
+            }
+          };
+        }
+        throw innerError;
+      }
     } catch (error: any) {
       let errorMessage = error?.message || String(error);
       
@@ -220,15 +247,28 @@ JOB URL: ${url}
 export async function evaluateSuitability(
   resumeText: string,
   jobDescription: string,
-  config: RouterConfig
+  config: RouterConfig,
+  fastMode: boolean = false
 ): Promise<SuitabilityResult> {
   const routedConfig = routeTask('evaluate_suitability', config);
-  const modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-pro-preview';
+  
+  let modelToUse = routedConfig.model;
+  if (fastMode && routedConfig.engine === 'gemini') {
+    modelToUse = 'gemini-2.0-flash';
+  } else if (!modelToUse) {
+    modelToUse = routedConfig.engine === 'openai' ? 'gpt-4o-mini' : 'gemini-3.1-pro-preview';
+  }
 
   const prompt = `
 You are an expert technical recruiter screening a candidate's resume against a job description.
+The current date is ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
 Your goal is to quickly evaluate if the candidate is a good fit, a stretch, or not recommended.
 Additionally, perform a focus "Red Team" Audit identifying flaws in wording, metrics, and alignment.
+
+CRITICAL INSTRUCTIONS FOR AUDIT:
+1. Dates: A "Present" or "Current" end date in experience is perfectly valid and is NOT a "future date" or "typo". Do not flag current roles as having date errors unless they actually start in the future.
+2. Scoring: The matchScore represents technical alignment with the JD. The readinessScore represents overall resume professionality and polish.
+3. Critique: Be harsh but fair. Identify "fluff" words, missing impact metrics, or structural issues.
 
 RESUME:
 ${resumeText}
@@ -377,7 +417,7 @@ ${recruiterSimulationMode ? 'TASK: Critical Hiring Manager Review. Provide rejec
 ${customPrompt ? `CUSTOM: ${customPrompt}` : ''}
 
 STRICT RULES:
-- HALLUCINATION PREVENTION: DO NOT invent, fabricate, or add any projects, experience, employers, or skills that are not explicitly present in the original resume text. Only refine and enhance existing content.
+- HALLUCINATION PREVENTION: DO NOT invent, fabricate, suggest, or add any certifications, projects, experience, employers, or skills that are not explicitly present in the original resume text. Specifically, do not suggest or add certifications like AZ-305 unless they are originally listed.
 - PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
 - INCLUDE ALL ROLES: Do not skip older roles. Include every role present in the input.
 - MAX 2 PAGES: Content must fit A4 layout (794x1123px).
@@ -590,11 +630,18 @@ export async function analyzeResumeCritique(
 export async function analyzeBestAudiences(
   jobDescription: string,
   targetRole: string,
-  config: RouterConfig
+  config: RouterConfig,
+  fastMode: boolean = false
 ): Promise<string[]> {
   const routedConfig = routeTask('multi_audience', config);
   console.log('analyzeBestAudiences called', { jobDescription, targetRole });
-  const modelToUse = 'gemini-3.1-pro-preview';
+  
+  let modelToUse = routedConfig.model;
+  if (fastMode && routedConfig.engine === 'gemini') {
+    modelToUse = 'gemini-2.0-flash';
+  } else if (!modelToUse) {
+    modelToUse = 'gemini-3.1-pro-preview';
+  }
   const prompt = `
     Analyze the following Job Description and Target Role.
     Select the most appropriate audiences from the following list:

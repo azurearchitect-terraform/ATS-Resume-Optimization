@@ -56,11 +56,25 @@ setInterval(() => {
 // We use a stable key derived from GEMINI_API_KEY if ENCRYPTION_KEY is not provided.
 // This prevents "bad decrypt" errors after server restarts.
 const getEncryptionKey = () => {
-  if (process.env.ENCRYPTION_KEY) return process.env.ENCRYPTION_KEY;
-  if (process.env.GEMINI_API_KEY) {
-    return crypto.createHash('sha256').update(process.env.GEMINI_API_KEY).digest('hex');
+  const envKey = process.env.ENCRYPTION_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  
+  if (envKey) {
+    if (envKey.length === 64) {
+      console.log("[Encryption] Using ENCRYPTION_KEY from environment.");
+      return envKey;
+    } else {
+      console.warn("[Encryption] ENCRYPTION_KEY in environment is not 64 characters. Hashing it to ensure 32-byte key.");
+      return crypto.createHash('sha256').update(envKey).digest('hex');
+    }
   }
-  // Fallback for local development if no keys are present
+  
+  if (geminiKey) {
+    console.log("[Encryption] Deriving ENCRYPTION_KEY from GEMINI_API_KEY.");
+    return crypto.createHash('sha256').update(geminiKey).digest('hex');
+  }
+  
+  console.warn("[Encryption] No ENCRYPTION_KEY or GEMINI_API_KEY found. Using static fallback key. WARNING: Your encrypted data will be lost if you provide an API key later.");
   return "4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b"; 
 };
 
@@ -225,8 +239,8 @@ async function startServer() {
           mimeType: mimeType,
         };
 
-        if (process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID) {
-          fileMetadata.parents = [process.env.GOOGLE_SERVICE_ACCOUNT_FOLDER_ID];
+        if (folderId) {
+          fileMetadata.parents = [folderId];
         }
         
         const media = {
@@ -285,9 +299,15 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("Drive Folder List Error:", error.message || error);
+      
+      let errorMessage = error.message || "Failed to fetch Drive folders";
+      if (error.code === 401 || (error.response && error.response.status === 401)) {
+        errorMessage = "AUTH_EXPIRED: Your Google Drive session has expired. Please reconnect your Drive in settings.";
+      }
+
       res.status(error.response?.status || 500).json({ 
         success: false, 
-        error: error.message || "Failed to fetch Drive folders"
+        error: errorMessage
       });
     }
   });
@@ -709,7 +729,7 @@ async function startServer() {
       }
 
       // STEP 1: Gemini (Cheap) - Extraction & Analysis
-      console.log("[Pipeline] Step 1: Gemini Extraction...");
+      console.log(`[Pipeline] Step 1: Gemini Extraction (${geminiKey ? 'User Key' : 'System Key'})...`);
       const [resumeExtraction, jdExtraction] = await Promise.all([
         Optimization.extractRelevantResumeData(resumeText, geminiKey),
         Optimization.extractJDKeywords(jobDescription, geminiKey)
@@ -717,6 +737,7 @@ async function startServer() {
 
       const resumeData = resumeExtraction?.data;
       const jdKeywords = jdExtraction?.data || [];
+      const extractionModelUsed = (resumeExtraction as any)?._model || "gemini-3.1-flash-lite-preview";
       
       const geminiUsage = {
         promptTokenCount: (resumeExtraction?.usage?.promptTokenCount || 0) + (jdExtraction?.usage?.promptTokenCount || 0),
@@ -745,7 +766,8 @@ async function startServer() {
         2. Focus on impact and keywords: ${optimizedInput.jd_keywords.join(', ')}.
         3. PRESERVE TITLES: Do not change job titles. Specifically, NEVER change "Officer IT cum Logistics" to "Office IT cum Logistics". This is a mandatory requirement.
         4. INCLUDE ALL ROLES: You MUST include every single role provided in the INPUT DATA. Do not skip any jobs, even very old ones. This is a strict rule.
-        5. BULLET POINT COUNTS:
+        5. NO HALLUCINATIONS: DO NOT invent, suggest, or add any certifications, skills, or experience that are not present in the INPUT DATA. Specifically, do not "suggest" certifications like AZ-305 if the user doesn't have them.
+        6. BULLET POINT COUNTS:
            - The first role (most recent) MUST have exactly 7 bullet points.
            - The second role MUST have exactly 6 bullet points.
            - The third role MUST have exactly 5 bullet points.
@@ -778,65 +800,95 @@ async function startServer() {
       `;
 
       let result;
-      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o-mini" : "gemini-3.1-pro-preview";
+      let usedModel = pipelineType === 'hybrid-openai' ? "gpt-4o" : "gemini-3.1-pro-preview";
 
       if (pipelineType === 'hybrid-openai') {
         // OPENAI BRANCH
-        console.log(`[Pipeline] Step 3: OpenAI Generation (${usedModel})...`);
-        const openai = new OpenAI({ apiKey: openaiKey });
-        const chatCompletion = await openai.chat.completions.create({
-          model: usedModel,
-          messages: [{ 
-            role: "system", 
-            content: "You are a senior executive resume strategist. Output strictly JSON." 
-          }, { 
-            role: "user", 
-            content: finalPrompt
-          }],
-          response_format: { type: "json_object" }
-        });
+        try {
+          console.log(`[Hybrid Pipeline] Step 3: Premium OpenAI Generation (${usedModel})...`);
+          const openai = new OpenAI({ apiKey: openaiKey });
+          const chatCompletion = await openai.chat.completions.create({
+            model: usedModel,
+            messages: [{ 
+              role: "system", 
+              content: "You are a senior executive resume strategist. Output strictly JSON." 
+            }, { 
+              role: "user", 
+              content: finalPrompt
+            }],
+            response_format: { type: "json_object" }
+          });
 
-        const responseText = chatCompletion.choices[0].message.content || "";
-        const genInput = chatCompletion.usage?.prompt_tokens || 0;
-        const genOutput = chatCompletion.usage?.completion_tokens || 0;
+          const responseText = chatCompletion.choices[0].message.content || "";
+          const genInput = chatCompletion.usage?.prompt_tokens || 0;
+          const genOutput = chatCompletion.usage?.completion_tokens || 0;
 
-        logUsage({
-          userId: "anonymous",
-          model: usedModel,
-          inputTokens: genInput,
-          outputTokens: genOutput,
-          totalTokens: genInput + genOutput,
-          cacheHit: false,
-          endpoint: "/api/v2/optimize",
-          timestamp: Date.now(),
-          cost: calculateCost(usedModel, genInput, genOutput)
-        });
+          logUsage({
+            userId: "anonymous",
+            model: usedModel,
+            inputTokens: genInput,
+            outputTokens: genOutput,
+            totalTokens: genInput + genOutput,
+            cacheHit: false,
+            endpoint: "/api/v2/optimize",
+            timestamp: Date.now(),
+            cost: calculateCost(usedModel, genInput, genOutput)
+          });
 
-        // Log Gemini Extraction
-        logUsage({
-          userId: "anonymous",
-          model: "gemini-2.0-flash",
-          inputTokens: geminiUsage.promptTokenCount,
-          outputTokens: geminiUsage.candidatesTokenCount,
-          totalTokens: geminiUsage.totalTokenCount,
-          cacheHit: false,
-          endpoint: "/api/v2/optimize",
-          timestamp: Date.now(),
-          cost: calculateCost("gemini-2.0-flash", geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
-        });
+          // Log Gemini Extraction
+          logUsage({
+            userId: "anonymous",
+            model: extractionModelUsed,
+            inputTokens: geminiUsage.promptTokenCount,
+            outputTokens: geminiUsage.candidatesTokenCount,
+            totalTokens: geminiUsage.totalTokenCount,
+            cacheHit: false,
+            endpoint: "/api/v2/optimize",
+            timestamp: Date.now(),
+            cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
+          });
 
-        result = {
-          result: responseText,
-          usage: {
-            promptTokenCount: genInput,
-            candidatesTokenCount: genOutput,
-            totalTokenCount: genInput + genOutput
-          },
-          geminiUsage,
-          intermediateData: { resumeData, jdKeywords },
-          _engine: 'hybrid-openai',
-          _model: usedModel
-        };
+          result = {
+            result: responseText,
+            usage: {
+              promptTokenCount: genInput,
+              candidatesTokenCount: genOutput,
+              totalTokenCount: genInput + genOutput
+            },
+            geminiUsage,
+            intermediateData: { resumeData, jdKeywords },
+            _engine: 'hybrid-openai',
+            _model: usedModel
+          };
+        } catch (openaiError: any) {
+          console.warn("[Pipeline] OpenAI Premium Failed, falling back to Gemini Flash...", openaiError.message);
+          // CRITICAL FALLBACK: If OpenAI (Premium) fails, use the cheap Gemini we have
+          const fallbackModelName = "gemini-2.0-flash";
+          const genAI = new GoogleGenAI({ apiKey: geminiKey });
+          
+          const fallbackResult = await genAI.models.generateContent({
+            model: fallbackModelName,
+            contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+            config: { responseMimeType: "application/json" }
+          });
+          
+          const text = fallbackResult.text || "";
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) throw new Error("Both OpenAI and Fallback Gemini failed.");
+
+          result = {
+            result: jsonMatch[0],
+            usage: {
+              promptTokenCount: fallbackResult.usageMetadata?.promptTokenCount || 0,
+              candidatesTokenCount: fallbackResult.usageMetadata?.candidatesTokenCount || 0,
+              totalTokenCount: fallbackResult.usageMetadata?.totalTokenCount || 0
+            },
+            geminiUsage,
+            intermediateData: { resumeData, jdKeywords },
+            _model: fallbackModelName,
+            _fallback: true
+          };
+        }
       } else {
         // GEMINI BRANCH
         try {
@@ -866,19 +918,17 @@ async function startServer() {
           cost: calculateCost(usedModel, genInput, genOutput)
         });
 
-        // Log Gemini 3 usage (extraction steps)
-        const geminiInput = geminiUsage.promptTokenCount;
-        const geminiOutput = geminiUsage.candidatesTokenCount;
+        // Log Gemini Extraction (Step 1)
         logUsage({
           userId: "anonymous",
-          model: "gemini-3-flash-preview",
-          inputTokens: geminiInput,
-          outputTokens: geminiOutput,
+          model: extractionModelUsed,
+          inputTokens: geminiUsage.promptTokenCount,
+          outputTokens: geminiUsage.candidatesTokenCount,
           totalTokens: geminiUsage.totalTokenCount,
           cacheHit: false,
           endpoint: "/api/v2/optimize",
           timestamp: Date.now(),
-          cost: calculateCost("gemini-3-flash-preview", geminiInput, geminiOutput)
+          cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
         });
 
         result = {
@@ -932,19 +982,17 @@ async function startServer() {
           cost: calculateCost(fallbackModelName, fallbackInput, fallbackOutput)
         });
 
-        // Log Gemini 3 usage (extraction steps)
-        const geminiInput = geminiUsage.promptTokenCount;
-        const geminiOutput = geminiUsage.candidatesTokenCount;
+        // Log Gemini Extraction
         logUsage({
           userId: "anonymous",
-          model: "gemini-3-flash-preview",
-          inputTokens: geminiInput,
-          outputTokens: geminiOutput,
+          model: extractionModelUsed,
+          inputTokens: geminiUsage.promptTokenCount,
+          outputTokens: geminiUsage.candidatesTokenCount,
           totalTokens: geminiUsage.totalTokenCount,
           cacheHit: false,
           endpoint: "/api/v2/optimize",
           timestamp: Date.now(),
-          cost: calculateCost("gemini-3-flash-preview", geminiInput, geminiOutput)
+          cost: calculateCost(extractionModelUsed, geminiUsage.promptTokenCount, geminiUsage.candidatesTokenCount)
         });
 
         result = {
